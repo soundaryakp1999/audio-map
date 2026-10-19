@@ -7,6 +7,7 @@ import { MapView } from './mapview';
 import { loadFavorites, removeFavorite } from './favorites';
 import { loadRecents } from './recents';
 import { geocode, type GeocodeResult } from './osm';
+import { UNMATCHED, byTierThenDistance, matchTier, mergeHits, type Hit } from './search';
 import { loadSettings, saveSettings, type Settings } from './settings';
 import { initPreview, stopPreview } from './preview';
 import { startBackground, stopBackground } from './background';
@@ -568,6 +569,24 @@ function showFavorites() {
   }
 }
 
+interface NavHit extends Hit {
+  name: string;
+  label: string;
+  radius: number;
+}
+
+/** Wider search results ranked like nearby places: best word match, then nearest. */
+function rankGeocode(q: string, found: GeocodeResult[]): NavHit[] {
+  return found
+    .map((r) => {
+      const name = shortName(r.name);
+      const title = r.title || name;
+      const d = game?.position ? game.distanceFromHere(r.lat, r.lon) : 0;
+      return { ...r, name, title, label: `${name}, ${game?.describeFromHere(r.lat, r.lon) ?? ''}`, tier: matchTier(q, [title, r.kind]) ?? UNMATCHED, d };
+    })
+    .sort(byTierThenDistance);
+}
+
 let navSeq = 0;
 async function runNavSearch() {
   if (!game) return;
@@ -576,26 +595,27 @@ async function runNavSearch() {
   if (!q) return showFavorites();
   const status = $('nav-status');
   const list = $<HTMLUListElement>('nav-results');
-  list.replaceChildren();
-  const add = (label: string, onPick: () => void) => {
-    const li = document.createElement('li');
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.textContent = label;
-    b.addEventListener('click', onPick);
-    li.appendChild(b);
-    list.appendChild(li);
-  };
-  // places already loaded around you come first, then a wider search biased toward where you are
-  for (const m of game.findPlaces(q)) add(`${m.name}, ${m.detail}`, () => pickDestination(m.name, m.lat, m.lon, 0));
+  const show = (hits: NavHit[]) =>
+    list.replaceChildren(
+      ...hits.map((h) => {
+        const li = document.createElement('li');
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = h.label;
+        b.addEventListener('click', () => pickDestination(h.name, h.lat, h.lon, h.radius));
+        li.appendChild(b);
+        return li;
+      }),
+    );
+  // places already loaded around you show at once; a wider search biased toward where you are
+  // then joins them, best word match first and nearest first within that
+  const near: NavHit[] = game.findPlaces(q).map((m) => ({ ...m, title: m.name, label: `${m.name}, ${m.detail}`, radius: 0 }));
+  show(near);
   status.textContent = 'Searching…';
   try {
     const found = await geocode(q, game.position ?? undefined);
     if (seq !== navSeq) return;
-    for (const r of found) {
-      const name = shortName(r.name);
-      add(`${name}, ${game.describeFromHere(r.lat, r.lon)}`, () => pickDestination(name, r.lat, r.lon, r.radius));
-    }
+    show(mergeHits(near, rankGeocode(q, found)).slice(0, 12));
   } catch {
     // keep any nearby matches
   }
@@ -785,8 +805,8 @@ const toggleVoice = setupVoice(
     }
     speech.say(`Searching for ${t.query}.`, 'normal');
     try {
-      const hit = (await geocode(t.query, game.position ?? undefined))[0];
-      if (hit) game.setTargetLatLon(shortName(hit.name), hit.lat, hit.lon, 0);
+      const hit = rankGeocode(t.query, await geocode(t.query, game.position ?? undefined))[0];
+      if (hit) game.setTargetLatLon(hit.name, hit.lat, hit.lon, 0);
       else speech.say(`No results for ${t.query}.`, 'high');
     } catch {
       speech.say('Search failed. Check your connection.', 'high');

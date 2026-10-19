@@ -248,6 +248,21 @@ describe('places', () => {
     expect(game.findPlaces('  ')).toEqual([]);
   });
 
+  it('findPlaces puts whole-word matches first, nearest first, before nearer partial matches', () => {
+    const { game, g } = setup(); // at (0, 50)
+    const at = (x: number, y: number) => ll(x, y);
+    g.world.addPlaces({
+      places: [
+        { id: 'n2', ...at(5, 60), tags: { shop: 'hairdresser', name: 'Barber Shop' } },
+        { id: 'n3', ...at(300, 300), tags: { amenity: 'pub', name: "Joe's Bar" } },
+        { id: 'n4', ...at(100, 100), tags: { amenity: 'pub', name: 'The Bar' } },
+      ],
+      signals: new Set(),
+    });
+    expect(game.findPlaces('bar').map((m) => m.name)).toEqual(['The Bar', "Joe's Bar", 'Barber Shop']);
+    expect(game.findPlaces('joes bar')[0].name).toBe("Joe's Bar");
+  });
+
   it('Tab browses nearby places and Enter sets one as destination', () => {
     const { game, g, said } = setup();
     g.settings.turnByTurn = false;

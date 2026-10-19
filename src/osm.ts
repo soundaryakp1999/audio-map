@@ -412,20 +412,24 @@ export interface GeocodeResult {
   lon: number;
   /** rough radius of the place in metres (0 for a point), from its bounding box */
   radius: number;
+  /** the place's own name, when it has one ("Blue Cafe"); empty for a plain address */
+  title: string;
+  /** what kind of place, e.g. "cafe" or "residential" */
+  kind: string;
 }
 
 /** Search for places. With `near`, results around that point are preferred (not required). */
 const GEOCODE_TIMEOUT_MS = 15_000;
 
 export async function geocode(q: string, near?: LatLon): Promise<GeocodeResult[]> {
-  let url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=${encodeURIComponent(q)}`;
+  let url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=10&q=${encodeURIComponent(q)}`;
   if (near) {
     const d = 0.15; // ~15 km
     url += `&viewbox=${near.lon - d},${near.lat + d},${near.lon + d},${near.lat - d}`;
   }
   const res = await fetch(url, { headers: { 'Accept-Language': navigator.language || 'en' }, signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`Search failed (${res.status})`);
-  const json = (await res.json()) as { display_name: string; lat: string; lon: string; boundingbox?: string[] }[];
+  const json = (await res.json()) as { display_name: string; name?: string; type?: string; lat: string; lon: string; boundingbox?: string[] }[];
   return json.map((r) => {
     let radius = 0;
     if (r.boundingbox?.length === 4) {
@@ -435,7 +439,7 @@ export async function geocode(q: string, near?: LatLon): Promise<GeocodeResult[]
       const wd = (e - w) * 111_320 * Math.cos((lat * Math.PI) / 180);
       radius = Math.min(h, wd) / 2;
     }
-    return { name: r.display_name, lat: parseFloat(r.lat), lon: parseFloat(r.lon), radius };
+    return { name: r.display_name, lat: parseFloat(r.lat), lon: parseFloat(r.lon), radius, title: r.name ?? '', kind: (r.type ?? '').replace(/_/g, ' ') };
   });
 }
 

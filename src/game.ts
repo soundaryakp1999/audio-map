@@ -26,6 +26,7 @@ import { fetchOnlineRoute, hasOnlineRouting } from './onlineRouter';
 import { VEHICLES, roadHalfWidth, type VehicleProfile } from './vehicles';
 import { conditionsReport, isDark } from './weather';
 import { departuresReport, transitous } from './transit';
+import { byTierThenDistance, matchTier } from './search';
 import { MINOR, TRANSIT, World, type Edge, type GNode, type Junction, type Place, type PlaceGroup, type RoadHit, type Way } from './world';
 
 const STEP = 1 / 60;
@@ -101,6 +102,10 @@ export interface PlaceMatch {
   detail: string;
   lat: number;
   lon: number;
+  /** how well it matched the search (see search.ts) */
+  tier: number;
+  /** metres away */
+  d: number;
 }
 
 interface StepEntry {
@@ -3651,17 +3656,25 @@ export class Game {
   /** Loaded places whose name matches the query, nearest first, for the destination search. */
   findPlaces(q: string): PlaceMatch[] {
     if (!this.world || !q.trim()) return [];
-    const needle = q.trim().toLowerCase();
-    return this.world.places
-      .filter((p) => p.name.toLowerCase().includes(needle) || p.category.toLowerCase().includes(needle))
-      .map((p) => ({ p, d: dist(this.x, this.y, p.x, p.y) }))
-      .sort((a, b) => a.d - b.d)
+    const found: { p: Place; tier: number; d: number }[] = [];
+    for (const p of this.world.places) {
+      const tier = matchTier(q, [p.name, p.category]);
+      if (tier !== null) found.push({ p, tier, d: dist(this.x, this.y, p.x, p.y) });
+    }
+    return found
+      .sort(byTierThenDistance)
       .slice(0, 8)
-      .map(({ p, d }) => {
+      .map(({ p, tier, d }) => {
         const ll = this.proj.toLatLon(p.x, p.y);
         const spot = this.placeDetail(p).short;
-        return { name: p.name, detail: `${p.category}${spot ? `, ${spot}` : ''}, ${this.describeOffset(d, bearingTo(this.x, this.y, p.x, p.y))}`, lat: ll.lat, lon: ll.lon };
+        return { name: p.name, detail: `${p.category}${spot ? `, ${spot}` : ''}, ${this.describeOffset(d, bearingTo(this.x, this.y, p.x, p.y))}`, lat: ll.lat, lon: ll.lon, tier, d };
       });
+  }
+
+  /** Straight-line metres from the traveller to a lat/lon. */
+  distanceFromHere(lat: number, lon: number): number {
+    const p = this.proj.toXY(lat, lon);
+    return dist(this.x, this.y, p.x, p.y);
   }
 
   /** "1.2 kilometres north-east" from the traveller to a lat/lon. */
