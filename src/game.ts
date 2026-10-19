@@ -8,6 +8,7 @@ import { bindingsOf, describeBinding, lookup, type ActionId, type Binding } from
 import { MapView } from './mapview';
 import { HIGHWAYS, fetchPlaces, fetchRoads, fetchCountry, fetchNamedAreas, fetchRoadsBox, fetchStopRoutes, reverseGeocode, type NamedArea, type RawPlaces, type RawRoads } from './osm';
 import { downloadGpx, routeToGpx } from './gpx';
+import { buzz } from './haptics';
 import { crossingLeg, drivesOnLeft, locate, routesText, spotText, stopDetail } from './placeinfo';
 import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
@@ -996,6 +997,7 @@ export class Game {
     const turn = ringNode ? null : this.routeTurnAt(j.nodes);
     if (turn) {
       this.audio.routeTurnHere(turn.rel);
+      this.buzz(turn.rel < 0 ? 'left' : 'right');
       for (let k = 0; k <= 2; k++) this.spokenSteps.add(k);
       this.speech.say(`Here: ${this.stepWithThen(turn)}.`, 'high');
       return;
@@ -1119,6 +1121,7 @@ export class Game {
     if (a.deadEnd) {
       this.announcedNodes.set(a.node.id, this.clock);
       this.audio.deadEnd();
+      this.buzz('deadEnd');
       this.speech.say(`${this.endWord(a)} in ${fmtDistance(a.forward, u)}${this.bendText(a.arrival, this.heading)}.`, pr);
       return;
     }
@@ -1479,6 +1482,10 @@ export class Game {
     return parts.join('; ');
   }
 
+  private buzz(kind: string) {
+    if (this.settings.haptics) buzz(kind);
+  }
+
   private dark = false;
   private darkCheckedAt = -Infinity;
 
@@ -1515,6 +1522,7 @@ export class Game {
       if (this.clock - (this.announcedHazards.get(key) ?? -1e9) < 120) continue;
       this.announcedHazards.set(key, this.clock);
       this.audio.hazardCue(h.text, relAngle(this.heading, bearingTo(this.x, this.y, h.x, h.y)), 1 - Math.min(1, d / reach));
+      this.buzz(h.text);
       const leg = h.text === 'Pedestrian crossing' || h.text === 'Crossing with signals' ? crossingLeg(this.world!, h.x, h.y, this.settings.units) : '';
       const extras = h.extras?.length ? `. ${cap(h.extras.join(', '))}` : '';
       this.speech.say(`${h.text} ahead, ${fmtDistance(d, this.settings.units)}${leg ? `, ${leg}` : ''}${extras}`, 'high');
@@ -1603,6 +1611,7 @@ export class Game {
     const d = dist(this.x, this.y, this.dest.x, this.dest.y);
     if (d < Math.max(this.arriveRadius, this.dest.radius ?? 0)) {
       this.audio.arrival();
+      this.buzz('arrival');
       const done = this.trip ? ` Trip: ${this.tripText(this.trip)}. Press U to hear it again.` : '';
       this.lastTrip = this.trip ? `Last trip to ${this.dest.name}: ${this.tripText(this.trip)}.` : '';
       this.speech.say(`Arrived at ${this.dest.name}.${this.arrivalHint(this.dest)}${done}`, 'high');
@@ -2133,6 +2142,7 @@ export class Game {
       this.lastWrongWay = this.clock;
       this.furthestProg = this.routeProg;
       this.audio.wrongWay();
+      this.buzz('wrongWay');
       this.speech.say('Wrong way. Turn around.', 'high');
     }
 
@@ -2179,7 +2189,10 @@ export class Game {
       if (k < 2) {
         this.speech.say(`In ${fmtDistance(d, u)}, ${this.whichIntersection(m)}${text}.`, k === 0 ? 'normal' : 'high');
       } else if (m.kind !== 'arrive') {
-        if (m.kind !== 'roundabout' && m.kind !== 'cross') this.audio.turnCue(m.rel); // its overall direction isn't the way to turn in
+        if (m.kind !== 'roundabout' && m.kind !== 'cross') {
+          this.audio.turnCue(m.rel); // its overall direction isn't the way to turn in
+          this.buzz(m.rel < 0 ? 'left' : 'right');
+        }
         this.speech.say(`${cap(text)}.`, 'high');
       }
       break;
@@ -2304,6 +2317,8 @@ export class Game {
         return void this.shareLink();
       case 'exportRoute':
         return this.exportRoute();
+      case 'sos':
+        return void this.sos();
       case 'saveOffline':
         return void this.saveOffline();
       case 'tripSummary':
@@ -2428,7 +2443,7 @@ export class Game {
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, Shift L live GPS: your real position and compass move you, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
         'F3 grid mode: arrows step north, south, west and east with a sound for the ground, minus and equals change the step, Space says where you are. ' +
-        'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. ' + `${this.keyText('navigate')} searches for a destination. ` + 'D says the distance to go, D twice switches walking routes between shortest and streets only, ' + `${this.keyText('turnByTurn')} toggles turn by turn directions,` + ' I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it, Control V reports a wrong or missing road or place to OpenStreetMap. Z copies a link to this spot and route, Shift Z saves the route as a GPX file, Shift S saves the map here for offline use. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. Shift X says the nearest entrances, platforms and lifts, Shift O the nearest toilets, bench, drinking water, shelter, post box and cash machine. Shift T reads the next departures when you stand at a stop, using the open Transitous feed, which covers much of Europe, North America and Australia. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. Control Shift P opens the command palette: type to find any action. ' +
+        'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. ' + `${this.keyText('navigate')} searches for a destination. ` + 'D says the distance to go, D twice switches walking routes between shortest and streets only, ' + `${this.keyText('turnByTurn')} toggles turn by turn directions,` + ' I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it, Control V reports a wrong or missing road or place to OpenStreetMap. Z copies a link to this spot and route, Shift Z saves the route as a GPX file, Shift S saves the map here for offline use. U says how the trip went. E says where you are with the nearest landmark and stop, and the way back to the route if you have left it. Shift K says your address and shares your location as a map link. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. Shift X says the nearest entrances, platforms and lifts, Shift O the nearest toilets, bench, drinking water, shelter, post box and cash machine. Shift T reads the next departures when you stand at a stop, using the open Transitous feed, which covers much of Europe, North America and Australia. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. Control Shift P opens the command palette: type to find any action. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. Sound themes are chosen in settings or from the command palette. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
@@ -3007,9 +3022,45 @@ export class Game {
     const here = this.position;
     const area = here ? await Promise.race([reverseGeocode(here), new Promise<null>((r) => setTimeout(r, 2500))]) : null;
     const parts = [this.locationText(area ?? this.areaName)];
+    const back = this.routeBackText();
+    if (back) parts.push(back);
+    const acc = this.live && this.gpsEst?.acc;
+    if (acc && acc > 25) parts.push(`Your location is only accurate to about ${fmtDistance(acc, u)}, so street names may be off.`);
     if (landmark) parts.push(`Nearest landmark: ${at(landmark)}.`);
     if (stop) parts.push(`Nearest ${stop.category}: ${at(stop)}.`);
     this.speech.say(parts.join(' '), 'high');
+  }
+
+  /** Where the planned route is, when you have drifted from it; empty when there is no route or you are on it. */
+  private routeBackText(): string {
+    const pts = this.route?.points;
+    if (!pts || pts.length < 2) return '';
+    let best: ReturnType<typeof pointSeg> | null = null;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const h = pointSeg(this.x, this.y, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
+      if (!best || h.dist < best.dist) best = h;
+    }
+    if (!best || best.dist <= 30) return '';
+    return `You are ${fmtDistance(best.dist, this.settings.units)} from your route. The way back is ${this.dirTo(best.px, best.py)}.`;
+  }
+
+  /** Shift K: say where you are, and share it with a trusted contact as a map link. Not a live feed. */
+  private async sos() {
+    const here = this.position;
+    if (!here) return this.speech.say('No location yet to share.', 'high');
+    const where = this.locationText().replace(/\.$/, '');
+    const url = `https://www.openstreetmap.org/?mlat=${here.lat.toFixed(5)}&mlon=${here.lon.toFixed(5)}#map=18/${here.lat.toFixed(5)}/${here.lon.toFixed(5)}`;
+    const text = `I need help. ${where}. Map: ${url}`;
+    this.speech.say(`${where}. Coordinates ${here.lat.toFixed(5)}, ${here.lon.toFixed(5)}. Sharing your location now.`, 'high');
+    const canShare = typeof navigator.share === 'function';
+    try {
+      if (canShare) await navigator.share({ title: 'I need help', text });
+      else await navigator.clipboard.writeText(text);
+      this.speech.say(canShare ? 'Location shared.' : 'Message copied. Paste it into a message to someone you trust.', 'high');
+    } catch (e) {
+      // closing the share sheet is not a failure
+      if ((e as Error).name !== 'AbortError') this.speech.say('Could not share. Read the address above to someone nearby.', 'high');
+    }
   }
 
   private nearby(r: number) {
@@ -3442,6 +3493,7 @@ export class Game {
   setTarget(t: Target) {
     if (dist(this.x, this.y, t.x, t.y) < Math.max(this.arriveRadius, t.radius ?? 0)) {
       this.audio.arrival();
+      this.buzz('arrival');
       return this.speech.say(`You are already at ${t.name}.`, 'high');
     }
     this.dest = t;
@@ -3600,14 +3652,16 @@ export class Game {
 
   /** Shift S: fetch the map around here (and the destination) now, so it loads without a connection later. */
   private async saveOffline() {
-    const spots = [this.proj.toLatLon(this.x, this.y)];
-    if (this.dest) spots.push(this.proj.toLatLon(this.dest.x, this.dest.y));
     const radius = this.vehicle.loadRadius;
+    // along the route when there is one, so the whole way opens offline, not just both ends
+    const along = this.route ? corridorSpots(this.route.points, radius * 1.5, 12) : [];
+    const spots = [this.proj.toLatLon(this.x, this.y), ...along.map((p) => this.proj.toLatLon(p.x, p.y))];
+    if (this.dest && !along.length) spots.push(this.proj.toLatLon(this.dest.x, this.dest.y));
     this.speech.say('Saving this area for offline use.', 'high');
     const none = new AbortController().signal;
     try {
       for (const c of spots) await Promise.all([fetchTileArea(c, radius, none), fetchRoads(c, radius, none), fetchPlaces(c, radius, none)]);
-      this.speech.say(`Saved the map around ${spots.length > 1 ? 'here and the destination' : 'here'} for offline use.`, 'high');
+      this.speech.say(`Saved the map around ${along.length ? 'here and along the route' : spots.length > 1 ? 'here and the destination' : 'here'} for offline use.`, 'high');
     } catch {
       this.speech.say('Could not save the area. Check your connection.', 'high');
     }
@@ -3862,6 +3916,22 @@ export function crossingAdvice(text: string, extras: string[]): string {
   }
   if (text === 'Pedestrian crossing') return 'At an uncontrolled crossing. Wait until traffic has stopped, and listen before crossing.';
   return '';
+}
+
+/** Points along a route about `spacing` metres apart, ending at the last point, at most `max` of them. */
+export function corridorSpots<P extends { x: number; y: number; d: number }>(points: P[], spacing: number, max: number): P[] {
+  if (!points.length) return [];
+  const out: P[] = [];
+  let next = spacing;
+  for (const p of points) {
+    if (p.d < next) continue;
+    out.push(p);
+    next = p.d + spacing;
+  }
+  const last = points[points.length - 1];
+  if (out[out.length - 1] !== last) out.push(last);
+  if (out.length <= max) return out;
+  return Array.from({ length: max }, (_, i) => out[Math.round((i * (out.length - 1)) / (max - 1))]);
 }
 
 function cap(s: string): string {

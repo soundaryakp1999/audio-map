@@ -13,7 +13,7 @@ const OLD: [string, boolean, boolean, ActionId][] = [
   ['w', false, false, 'whatsAround'], ['W', true, false, 'conditions'], [' ', false, false, 'sonar'], ['Tab', false, false, 'nextPlace'],
   ['Tab', true, false, 'prevPlace'], ['Enter', false, false, 'setDestination'], ['g', false, false, 'destinationInfo'],
   ['G', true, false, 'clearDestination'], ['Backspace', false, false, 'clearDestination'], ['c', false, false, 'filter'],
-  ['v', false, false, 'note'], ['V', true, false, 'deleteNote'], ['z', false, false, 'share'], ['Z', true, false, 'exportRoute'], ['S', true, false, 'saveOffline'], ['O', true, false, 'facilities'], ['u', false, false, 'tripSummary'],
+  ['v', false, false, 'note'], ['V', true, false, 'deleteNote'], ['z', false, false, 'share'], ['Z', true, false, 'exportRoute'], ['S', true, false, 'saveOffline'], ['O', true, false, 'facilities'], ['K', true, false, 'sos'], ['u', false, false, 'tripSummary'],
   ['e', false, false, 'whereAmI'], ['o', false, false, 'preview'], ['x', false, false, 'transit'], ['y', false, false, 'saveFavorite'],
   ['r', false, false, 'align'], ['f', false, false, 'search'], ['j', false, true, 'jump'], ['Q', true, false, 'saveRoute'],
   ['q', false, false, 'routes'], ['d', false, true, 'navigate'], ['d', false, false, 'distance'], ['m', false, false, 'mapRotation'],

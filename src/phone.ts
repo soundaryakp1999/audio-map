@@ -173,6 +173,8 @@ export class Phone {
       const on = this.hooks.toggleListen();
       this.el('ph-listen').setAttribute('aria-pressed', String(on));
     });
+    this.el('ph-sos').addEventListener('click', () => this.action('sos'));
+    this.el('ph-offline').addEventListener('click', () => this.action('saveOffline'));
     this.el('ph-nearby').addEventListener('click', () => this.openNearby());
     const kinds = this.el('ph-near-kinds');
     for (const [group, label] of NEAR_KINDS) {
