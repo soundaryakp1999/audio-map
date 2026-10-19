@@ -30,6 +30,10 @@ import { byTierThenDistance, matchTier } from './search';
 import { MINOR, TRANSIT, World, type Edge, type GNode, type Junction, type Place, type PlaceGroup, type RoadHit, type Way } from './world';
 
 const STEP = 1 / 60;
+/** No animation frame for this long (ms) means the screen is off or the page hidden. */
+const IDLE_AFTER = 400;
+/** Seconds before a phone tries a failed first map load again. */
+const LOAD_RETRY = 20;
 /** seconds off the ring before the roundabout counts as left */
 const RING_EXIT_DELAY = 0.5;
 export function minutesText(minutes: number): string {
@@ -168,6 +172,9 @@ export class Game {
   private loadCenter = { x: 0, y: 0 };
   private loading = false;
   private nextLoadTry = 0;
+  /** the first map of a start failed to load (cleared when it is tried again) */
+  private loadFailed = false;
+  private loadRetry: ReturnType<typeof setTimeout> | undefined;
   private loadAbort: AbortController | null = null;
   private areaName = '';
 
@@ -320,6 +327,7 @@ export class Game {
     const liveOff = !this.restartingForGps && !!this.live;
     if (!this.restartingForGps) this.stopLive();
     this.loadAbort?.abort();
+    clearTimeout(this.loadRetry);
     this.proj = new Projection(center);
     this.loadNotes();
     this.x = 0;
@@ -354,20 +362,44 @@ export class Game {
       this.running = true;
       this.lastFrame = performance.now();
       requestAnimationFrame(this.frame);
+      setInterval(this.idle, 500);
     }
 
     this.speech.say(`${liveOff ? 'Live GPS off. ' : ''}Loading map data${placeName ? ` for ${placeName}` : ''}. Please wait.`, 'high');
     void this.autoUnits(center);
+    await this.firstLoad();
+  }
+
+  /**
+   * Load the map for a fresh start, then put the traveller on the nearest road. On a phone, where
+   * there is no Escape to start again, a failed load tries again by itself until it works.
+   */
+  private async firstLoad() {
+    const proj = this.proj;
+    this.loadFailed = false;
     const stopHeartbeat = this.loadingHeartbeat();
     const ok = await this.load(true);
     stopHeartbeat();
     const world = this.world as World | null; // assigned during load()
-    if (!ok || !world) return;
+    if (!ok || !world) {
+      if (this.touch && this.loadFailed && this.proj === proj) {
+        this.loadRetry = setTimeout(() => {
+          if (this.proj !== proj || this.world) return; // started somewhere else meanwhile
+          // live GPS may have moved you while the map was missing
+          if (this.liveFix && this.gpsEst) {
+            this.x = this.gpsEst.x;
+            this.y = this.gpsEst.y;
+          }
+          void this.firstLoad();
+        }, LOAD_RETRY * 1000);
+      }
+      return;
+    }
 
     // put the traveller on the nearest suitable road, facing along it
     if (this.vehicle.id !== 'helicopter') {
       const hit =
-        world.nearestRoad(0, 0, 400, this.filter) ?? world.nearestRoad(0, 0, 400);
+        world.nearestRoad(this.x, this.y, 400, this.filter) ?? world.nearestRoad(this.x, this.y, 400);
       if (hit) {
         this.x = hit.hit.px;
         this.y = hit.hit.py;
@@ -500,10 +532,13 @@ export class Game {
       if (abort.signal.aborted) return false;
       console.error(e);
       this.audio.error();
+      if (initial) this.loadFailed = true;
       this.speech.say(
-        initial
-          ? 'Could not load map data. The map servers may be busy. Press Escape, then Start to try again.'
-          : 'Could not load more map data. Will retry shortly.',
+        !initial
+          ? 'Could not load more map data. Will retry shortly.'
+          : this.touch
+            ? `Could not load map data. The map servers may be busy, or there is no connection. Trying again in ${LOAD_RETRY} seconds.`
+            : 'Could not load map data. The map servers may be busy. Press Escape, then Start to try again.',
         'high',
       );
       this.nextLoadTry = this.clock + 20;
@@ -648,7 +683,32 @@ export class Game {
 
   private frame = (t: number) => {
     requestAnimationFrame(this.frame);
-    const dt = Math.max(0, Math.min(0.25, (t - this.lastFrame) / 1000)); // resume() can stamp a time later than this frame's
+    this.advance(t, 0.25);
+    if (this.paused || !this.world) return;
+    if (t > this.nextMap) {
+      this.nextMap = t + 33;
+      this.map.update(this.proj.toLatLon(this.x, this.y), this.heading, this.speed);
+    }
+    if (t > this.nextHud) {
+      this.nextHud = t + 200;
+      this.emitHud();
+    }
+  };
+
+  /**
+   * With the screen off the browser runs no animation frames, but a walk under live GPS goes on, and
+   * its turns, crossings, beacon and arrival with it. While frames have stopped, this timer keeps
+   * time instead. A hidden page gets timers about once a second, so it may cover a longer gap.
+   */
+  private idle = () => {
+    const t = performance.now();
+    if (!(this.live && this.liveFix) || t - this.lastFrame < IDLE_AFTER) return;
+    this.advance(t, 2);
+  };
+
+  /** Run the simulation up to time t (ms), at most maxDt seconds of it. */
+  private advance(t: number, maxDt: number) {
+    const dt = Math.max(0, Math.min(maxDt, (t - this.lastFrame) / 1000)); // resume() can stamp a time later than this frame's
     this.lastFrame = t;
     if (this.paused || !this.world) return;
     this.acc += dt;
@@ -668,15 +728,7 @@ export class Game {
       },
       dt,
     );
-    if (t > this.nextMap) {
-      this.nextMap = t + 33;
-      this.map.update(this.proj.toLatLon(this.x, this.y), this.heading, this.speed);
-    }
-    if (t > this.nextHud) {
-      this.nextHud = t + 200;
-      this.emitHud();
-    }
-  };
+  }
 
   private step(dt: number) {
     this.clock += dt;
@@ -3374,7 +3426,12 @@ export class Game {
 
   /** Where the traveller is and faces, for the phone screen. */
   get pose() {
-    return { x: this.x, y: this.y, heading: this.heading, live: !!this.live, ready: !!this.world, units: this.settings.units };
+    return { x: this.x, y: this.y, heading: this.heading, live: !!this.live, ready: !!this.world, loadFailed: this.loadFailed, units: this.settings.units };
+  }
+
+  /** Back from the lock screen or another app, where iOS may have interrupted the sound. */
+  wakeAudio() {
+    if (this.running && !this.paused) this.audio.resume();
   }
 
   /** What is at (x, y): road, named building or ground, as a short phrase with its sound. Null before the map loads. */

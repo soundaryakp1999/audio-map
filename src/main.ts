@@ -285,10 +285,14 @@ async function keepAwake() {
     wakeLock = null; // not allowed (battery saver, or not supported): the screen may lock
   }
 }
-// the browser drops the lock when the page is hidden; take it again on return
+// the browser drops the lock when the page is hidden; take it again on return. iOS can also leave
+// the sound interrupted after the lock screen, so it is resumed then and on the next tap
 document.addEventListener('visibilitychange', () => {
-  if (wakeLock && document.visibilityState === 'visible' && phone.active) void keepAwake();
+  if (document.visibilityState !== 'visible' || !phone.active) return;
+  if (wakeLock) void keepAwake();
+  game?.wakeAudio();
 });
+$('phone').addEventListener('pointerdown', () => game?.wakeAudio());
 
 let stopShake: (() => void) | null = null;
 /** Listen for shakes only while the phone screen is up and the player has asked for it. */
