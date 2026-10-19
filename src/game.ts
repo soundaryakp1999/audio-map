@@ -1992,15 +1992,16 @@ export class Game {
     void this.computeRoute(true);
   }
 
-  /** Distances (m) before a manoeuvre at which it is spoken: early, closer, now. */
+  /** Distances (m) before a manoeuvre at which it is spoken: early, closer, now. Faster travel hears them earlier. */
   private get stepThresholds(): [number, number, number] {
+    const s = (ref: number) => paceScale(this.speed, ref);
     switch (this.vehicle.id) {
       case 'walker':
-        return [60, 25, 14];
+        return [60 * s(1.4), 25 * s(1.4), 14 * s(1.4)];
       case 'bicycle':
-        return [150, 50, Math.max(15, this.speed * 2.5)];
+        return [150 * s(5), 50 * s(5), Math.max(15, this.speed * 2.5)];
       default:
-        return [400, 150, Math.max(30, this.speed * 2.5)];
+        return [400 * s(14), 150 * s(14), Math.max(30, this.speed * 2.5)];
     }
   }
 
@@ -3815,6 +3816,11 @@ const IMPERIAL_COUNTRIES = new Set(['us', 'pr', 'gu', 'vi', 'as', 'mp', 'lr']);
 /** An angle rounded to 5 degrees, for speech. */
 function deg5(a: number): number {
   return Math.round(Math.abs(a) / 5) * 5;
+}
+
+/** How much to stretch the spoken-turn distances: 1 at the usual pace `ref` (m/s), up to double when faster, down to 0.7 when slower. */
+export function paceScale(speed: number, ref: number): number {
+  return speed < 0.3 ? 1 : Math.max(0.7, Math.min(2, speed / ref));
 }
 
 function cap(s: string): string {

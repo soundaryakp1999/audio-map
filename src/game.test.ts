@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Game, minutesText } from './game';
+import { Game, minutesText, paceScale } from './game';
 import { loadNotes, saveNotes } from './notes';
 import { Projection } from './geo';
 import { loadSettings } from './settings';
@@ -1191,5 +1191,26 @@ describe('live GPS walking', () => {
     g.gpsEst = { x: 0, y: 50, acc: 5, t: 0 };
     for (let i = 0; i < 120; i++) g.followGps(1 / 60);
     expect(g.heading).toBeGreaterThan(85);
+  });
+});
+
+describe('turn reminder distances', () => {
+  it('paceScale stays 1 when stopped, grows with speed to double, and shrinks to 0.7', () => {
+    expect(paceScale(0, 1.4)).toBe(1);
+    expect(paceScale(1.4, 1.4)).toBe(1);
+    expect(paceScale(2.1, 1.4)).toBeCloseTo(1.5);
+    expect(paceScale(9, 1.4)).toBe(2);
+    expect(paceScale(0.5, 1.4)).toBe(0.7);
+  });
+
+  it('a fast walker hears turns earlier than a slow one', () => {
+    const { g } = setup();
+    g.speed = 0.7;
+    const slow = g.stepThresholds;
+    g.speed = 2.8;
+    const fast = g.stepThresholds;
+    expect(slow[0]).toBeCloseTo(42);
+    expect(fast[0]).toBeCloseTo(120);
+    expect(fast[2]).toBeGreaterThan(slow[2]);
   });
 });
