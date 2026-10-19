@@ -1065,6 +1065,22 @@ describe('phone screen', () => {
     expect(said.at(-1)).toBe("Bench, 40 metres at 12 o'clock. Toilets, 200 metres at 12 o'clock.");
   });
 
+  it('E says the way back when you have left the route, and a weak GPS fix', async () => {
+    const { game, said, g } = setup();
+    g.route = { points: [{ x: 100, y: 50, d: 0 }, { x: 100, y: 450, d: 400 }], maneuvers: [], length: 400, partial: false };
+    g.live = true;
+    g.gpsEst = { x: 0, y: 50, acc: 60, t: 0 };
+    game.run('e');
+    await flush();
+    expect(said.at(-1)).toMatch(/You are 100 metres from your route\. The way back is at 3 o'clock\./);
+    expect(said.at(-1)).toMatch(/only accurate to about 60 metres/);
+    g.route = { points: [{ x: 10, y: 50, d: 0 }, { x: 10, y: 450, d: 400 }], maneuvers: [], length: 400, partial: false };
+    g.gpsEst = { x: 0, y: 50, acc: 5, t: 0 };
+    game.run('e');
+    await flush();
+    expect(said.at(-1)).not.toMatch(/from your route|only accurate/);
+  });
+
   it('picks units by country until the player chooses: imperial in the US, metric in India', async () => {
     const units: string[] = [];
     vi.mocked(fetchCountry).mockResolvedValueOnce('us').mockResolvedValueOnce('in');
