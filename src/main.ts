@@ -314,7 +314,16 @@ const phone = new Phone($('phone'), () => game, {
   shakeLabel,
   toggleShake: () => {
     update({ shake: !settings.shake });
-    if (settings.shake) void requestMotion(); // from this tap: iOS asks only inside a gesture
+    if (settings.shake) {
+      // asked from this tap (iOS asks only inside a gesture); if refused, shaking could never work
+      void requestMotion().then((ok) => {
+        if (ok || !settings.shake) return;
+        update({ shake: false });
+        applyShake();
+        $('ph-shake').textContent = shakeLabel();
+        speech.say('Motion access was not allowed, so shake is off. It can be allowed in the browser settings for this site.', 'high');
+      });
+    }
     applyShake();
     speech.say(settings.shake ? 'Shake the phone to hear where you are.' : 'Shake is off.', 'high');
     return shakeLabel();

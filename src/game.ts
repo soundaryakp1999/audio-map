@@ -1504,7 +1504,11 @@ export class Game {
 
   /** A usual reach stretched by the player's setting, kept inside the area that is loaded. */
   private reach(base: number): number {
-    return Math.min(base * this.settings.radiusScale, this.vehicle.loadRadius * 0.9);
+    // the map is a square loaded around where it last loaded, not around you: stay inside what is
+    // left of it from here (but never below the usual reach, which was always allowed)
+    const fromCentre = Math.max(Math.abs(this.x - this.loadCenter.x), Math.abs(this.y - this.loadCenter.y));
+    const left = this.vehicle.loadRadius * 0.9 - fromCentre;
+    return Math.min(base * this.settings.radiusScale, Math.max(base, left));
   }
 
   /** Ctrl ] and Ctrl [: announce places from farther or nearer. */

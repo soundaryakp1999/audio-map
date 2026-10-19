@@ -1445,3 +1445,19 @@ describe('open in maps app', () => {
     vi.stubGlobal('window', { dispatchEvent: () => true });
   });
 });
+
+describe('hearing farther stays inside the loaded map', () => {
+  it('shrinks the reach as you drift from where the map was loaded, never below the usual', () => {
+    const { g } = setup(); // walker
+    const v = g.vehicle;
+    g.settings.radiusScale = 3;
+    g.loadCenter = { x: 0, y: 0 };
+    g.x = 0;
+    g.y = 0;
+    expect(g.reach(v.scanRadius)).toBe(Math.min(v.scanRadius * 3, v.loadRadius * 0.9));
+    g.y = v.loadRadius * 0.5; // drifted north, not yet far enough for a new load
+    expect(g.reach(v.scanRadius)).toBeCloseTo(Math.max(v.scanRadius, v.loadRadius * 0.4));
+    g.y = v.loadRadius * 0.85; // right at the edge
+    expect(g.reach(v.scanRadius)).toBe(v.scanRadius);
+  });
+});
