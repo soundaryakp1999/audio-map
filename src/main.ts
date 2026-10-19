@@ -8,6 +8,8 @@ import { loadFavorites, removeFavorite } from './favorites';
 import { geocode, type GeocodeResult } from './osm';
 import { loadSettings, saveSettings, type Settings } from './settings';
 import { initPreview, stopPreview } from './preview';
+import { startBackground, stopBackground } from './background';
+import type { ActionId } from './keymap';
 import type { PlaceGroup } from './world';
 import { Speech } from './speech';
 import { Tutorial } from './tutorial';
@@ -297,6 +299,11 @@ const phone = new Phone($('phone'), () => game, {
   guide: () => {
     if (!settings.turnByTurn || !settings.beaconSound) update({ turnByTurn: true, beaconSound: true });
     void keepAwake();
+    const act = (id: ActionId) => {
+      const b = game?.keyFor(id);
+      if (b) game?.run(b.key, b);
+    };
+    startBackground({ next: () => act('instructions'), previous: () => act('whereAmI') }, 'Walking guidance');
   },
 });
 
@@ -336,6 +343,7 @@ function leavePhone() {
   $('app').inert = false;
   void wakeLock?.release().catch(() => {});
   wakeLock = null;
+  stopBackground();
 }
 
 $('phone-btn').addEventListener('click', startPhone);
