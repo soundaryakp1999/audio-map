@@ -838,6 +838,14 @@ if (!shared && prefersPhone()) {
 
 // the dev server must not serve stale files from a worker
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  // opened on a weak signal, the saved app came up; once the new one is in, switch to it, but only
+  // on the home screen: never mid-walk, and not over a search being typed
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if ((e.data as { type?: string } | null)?.type !== 'updated' || game) return;
+    const el = document.activeElement;
+    if (el instanceof HTMLInputElement && el.value) return;
+    location.reload();
+  });
   void navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 
