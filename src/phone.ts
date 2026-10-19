@@ -299,10 +299,9 @@ export class Phone {
     let cx = p.x;
     let cy = p.y;
     let up = 0;
-    let turned = false;
     if (travel) {
+      // no announcement when up changes: the traveller knows they turned, and the status line shows it
       const r = nextUp(this.up, g.streetUp(p.heading), performance.now());
-      turned = r.turned && !!this.up;
       this.up = r.state;
       up = r.state.dir;
     } else {
@@ -314,7 +313,6 @@ export class Phone {
     if (!f || f.up !== up || f.size !== size || f.units !== units || f.mode !== this.mode || dist(f.cx, f.cy, cx, cy) > size / 2) {
       this.frame = { cx, cy, up, size, units, mode: this.mode };
       void this.render();
-      if (turned) g.announce(`Map turned: up is ${this.up?.street ? `${this.up.street}, ` : ''}${compass8(up)}.`);
     }
     const n = SQUARES[this.sizeIdx];
     const unit = units === 'imperial' ? 'yard' : 'metre';
