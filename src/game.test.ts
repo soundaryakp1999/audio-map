@@ -383,6 +383,13 @@ describe('turn-by-turn', () => {
     g.y = cross.y - 10; // closer: not said again
     g.updateRoute();
     expect(said.length).toBe(n);
+    g.y = cross.y - 7; // at the kerb of Elm Street (5 m from its centre line): the last call
+    g.updateRoute();
+    expect(said.at(-1)).toBe('Cross Elm Street, at the signals, audible signal.');
+    expect(g.directionsText()).toBe('Now, cross Elm Street, at the signals, audible signal.');
+    g.y = cross.y - 6;
+    g.updateRoute();
+    expect(said.length).toBe(n + 1);
   });
 
   it('does not count turning onto a street as crossing it', () => {
@@ -1018,6 +1025,15 @@ describe('phone screen', () => {
     game.setTarget({ name: 'Elm End', x: 150, y: 200 });
     await flush();
     expect(game.directionsText()).toMatch(/^In 150 metres, .*turn right onto Elm Street\.$/);
+  });
+
+  it('says "now" instead of a distance once closer than GPS can tell', async () => {
+    const { game, g } = setup();
+    game.setTarget({ name: 'Elm End', x: 150, y: 200 });
+    await flush();
+    g.y = 195;
+    g.updateRoute();
+    expect(game.directionsText()).toBe('Now, turn right onto Elm Street.');
   });
 
   it('Shift Z saves the planned route as a GPX file', async () => {

@@ -432,8 +432,8 @@ export class World {
    * The named streets (not footpaths) that the line a–b cuts across: where, how far along it (t,
    * 0..1), and which street. Touching at an end does not count.
    */
-  streetsCrossed(ax: number, ay: number, bx: number, by: number): { x: number; y: number; t: number; name: string }[] {
-    const out: { x: number; y: number; t: number; name: string }[] = [];
+  streetsCrossed(ax: number, ay: number, bx: number, by: number): { x: number; y: number; t: number; name: string; type: string }[] {
+    const out: { x: number; y: number; t: number; name: string; type: string }[] = [];
     const rx = bx - ax;
     const ry = by - ay;
     const half = Math.hypot(rx, ry) / 2;
@@ -446,7 +446,7 @@ export class World {
       const t = ((s.ax - ax) * sy - (s.ay - ay) * sx) / den;
       const u = ((s.ax - ax) * ry - (s.ay - ay) * rx) / den;
       if (t <= 0.001 || t >= 0.999 || u < 0 || u > 1) continue;
-      out.push({ x: ax + t * rx, y: ay + t * ry, t, name: s.way.name });
+      out.push({ x: ax + t * rx, y: ay + t * ry, t, name: s.way.name, type: s.way.type });
     }
     return out.sort((a, b) => a.t - b.t);
   }

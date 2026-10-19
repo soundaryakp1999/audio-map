@@ -52,6 +52,8 @@ const FILTER_NAMES: Record<PlaceGroup, string> = {
 const FILTERS: (PlaceGroup | null)[] = [null, 'food', 'shop', 'transport', 'health', 'culture', 'nature', 'service'];
 /** distances (m) at which progress toward the destination is spoken */
 const MILESTONES = [50, 100, 200, 500, 1000, 2000, 5000];
+/** Closer than this (metres), GPS cannot place you any better: say "now", not a distance. */
+const HERE = 8;
 /** grid mode step sizes, in metres (yards with imperial units) */
 const GRID_STEPS = [1, 10, 100, 1000];
 const GRID_MOVES: Record<string, [number, number]> = { ArrowUp: [0, 1], ArrowDown: [0, -1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
@@ -1177,7 +1179,7 @@ export class Game {
     if (bend.at > this.speed * 5 + 20) return;
     if (bend.keys.some((k) => this.clock - (this.announcedBends.get(k) ?? -1e9) < 60)) return; // already told (or already in it)
     for (const k of bend.keys) this.announcedBends.set(k, this.clock);
-    const when = bend.at < 8 ? 'now' : `in ${fmtDistance(bend.at, this.settings.units)}`;
+    const when = this.inDistance(bend.at);
     this.speech.say(`${cap(this.bendWords(bend))} ${when}${this.bendDetail(bend)}.`, 'normal');
   }
 
@@ -1210,7 +1212,7 @@ export class Game {
   private bendsLead(bends: { at: number; turn: number; length: number }[]): string {
     if (!bends.length) return '';
     const b = bends[0];
-    const when = b.at < 8 ? 'now' : `in ${fmtDistance(b.at, this.settings.units)}`;
+    const when = this.inDistance(b.at);
     const more = bends.length > 1 ? `, and ${bends.length - 1} more bend${bends.length > 2 ? 's' : ''}` : '';
     return `${this.bendWords(b)} ${when}${this.bendDetail(b)}${more}, then `;
   }
@@ -1974,7 +1976,7 @@ export class Game {
         ? r.partial
           ? 'Follow this road.'
           : `${dest.name} is ${fmtDistance(first.d, u)} along this road.`
-        : `In ${fmtDistance(first.d, u)}, ${this.whichIntersection(first)}${this.stepText(first, dest.name)}.`;
+        : `${this.stepWhen(first, first.d)}.`;
     // the instruction was just given: don't repeat the early reminders
     const th = this.stepThresholds;
     for (let k = 0; k < 2; k++) if (first.d <= th[k]) this.spokenSteps.add(k);
@@ -2021,7 +2023,7 @@ export class Game {
     for (const m of steps.slice(0, double ? 3 : 1)) {
       const gap = Math.max(0, m.d - at);
       const text = this.stepText(m, this.dest.name);
-      parts.push(at > this.routeProg ? `Then after ${fmtDistance(gap, u)}, ${text}` : `In ${fmtDistance(gap, u)}, ${this.whichIntersection(m)}${text}`);
+      parts.push(at > this.routeProg ? `Then after ${fmtDistance(gap, u)}, ${text}` : this.stepWhen(m, gap));
       at = m.d;
     }
     if (double && steps.length <= 3 && r.partial) parts.push('The route continues as more map loads');
@@ -2067,7 +2069,7 @@ export class Game {
           const d = a.d + h.t * (b.d - a.d);
           // both halves of a divided road, or the same street from two loaded maps: one crossing
           if (found.some((c) => c.name === h.name && Math.abs(c.d - d) < 30)) continue;
-          found.push({ d, x: h.x, y: h.y, name: h.name, via: this.crossingVia(h.x, h.y) });
+          found.push({ d, x: h.x, y: h.y, name: h.name, via: this.crossingVia(h.x, h.y), kerb: roadHalfWidth(h.type) });
         }
       }
     };
@@ -2279,13 +2281,16 @@ export class Game {
     if (!m || (m.kind === 'arrive' && r.partial)) return;
     const d = m.d - this.routeProg;
     const atJunction = this.turnAtJunction(m);
+    // a crossing's last call comes at the kerb, as you step up to cross, not by pace
+    const at = m.kind === 'cross' ? [th[0], th[1], (m.kerb ?? 0) + 3] : th;
     for (let k = 2; k >= 0; k--) {
-      if (d > th[k] || this.spokenSteps.has(k)) continue;
+      if (d > at[k] || this.spokenSteps.has(k)) continue;
       // a turn at an intersection is called when you are in that intersection (checkInJunction),
       // not by distance, which could fall on a side street just before it
       if (k === 2 && atJunction) continue;
-      // a crossing is said once, on the approach, with what follows it: one per street crossed is plenty
-      if (m.kind === 'cross' ? k !== 1 : k < 2 && d <= th[k + 1] * 1.4) continue; // else the closer reminder is coming up anyway
+      // a crossing is said on the approach and again at the kerb, with what follows it
+      if (m.kind === 'cross' && k === 0) continue;
+      if (k < 2 && d <= at[k + 1] * 1.4) continue; // the closer reminder is coming up anyway
       for (let j = 0; j <= k; j++) this.spokenSteps.add(j); // never say an earlier reminder after a later one
       const text = this.stepWithThen(m);
       if (k < 2) {
@@ -3469,7 +3474,23 @@ export class Game {
     const steps = r.maneuvers.slice(this.nextMan).filter((m) => !(m.kind === 'arrive' && r.partial) && !this.isTrivial(m));
     const m = steps[0];
     if (!m) return r.partial ? 'Follow this road; more of the route loads as you go.' : `Arriving at ${dest.name}.`;
-    return `In ${fmtDistance(Math.max(0, m.d - this.routeProg), u)}, ${this.whichIntersection(m)}${this.stepText(m, dest.name)}.`;
+    return `${this.stepWhen(m, m.d - this.routeProg)}.`;
+  }
+
+  /**
+   * "In 40 metres, at the next intersection, turn left onto Oak Street". Within HERE, where GPS
+   * cannot measure any closer: "Now, turn left onto Oak Street", or "Blue Cafe is very close".
+   */
+  private stepWhen(m: Maneuver, d: number): string {
+    const name = this.dest?.name ?? 'Your destination';
+    if (d >= HERE) return `In ${fmtDistance(d, this.settings.units)}, ${this.whichIntersection(m)}${this.stepText(m, name)}`;
+    if (m.kind !== 'arrive') return `Now, ${this.stepText(m, name)}`;
+    return `${name} is very close${Math.abs(m.rel) >= 25 ? `, on your ${m.rel < 0 ? 'left' : 'right'}` : ''}`;
+  }
+
+  /** "in 40 metres", or "now" within HERE. */
+  private inDistance(d: number): string {
+    return d < HERE ? 'now' : `in ${fmtDistance(d, this.settings.units)}`;
   }
 
   /** Fetch OpenStreetMap's named buildings and grounds around here, in the background, once per ~500 m. */
@@ -3834,7 +3855,7 @@ export class Game {
     const r = this.route;
     if (!r) return this.speech.say(`${straight}.${lines}`, 'high');
     const m = this.upcoming();
-    const next = m && m.kind !== 'arrive' ? `${cap(this.stepText(m, this.dest.name))} in ${fmtDistance(m.d - this.routeProg, u)}. ` : '';
+    const next = m && m.kind !== 'arrive' ? `${cap(this.stepText(m, this.dest.name))} ${this.inDistance(m.d - this.routeProg)}. ` : '';
     const left = r.partial ? `${fmtDistance(r.length - this.routeProg, u)} of route loaded so far` : `${fmtDistance(r.length - this.routeProg, u)} to go`;
     this.speech.say(`${next}${left}. ${straight} in a straight line.${lines}`, 'high');
   }
@@ -3970,7 +3991,7 @@ export class Game {
       const d = dist(this.x, this.y, this.dest.x, this.dest.y);
       destination = `${this.dest.name} · ${fmtDistance(d, u)} · ${this.dirTo(this.dest.x, this.dest.y)}`;
       const m = this.upcoming();
-      if (m && m.kind !== 'arrive') destination += ` · ${this.stepText(m, this.dest.name)} in ${fmtDistance(m.d - this.routeProg, u)}`;
+      if (m && m.kind !== 'arrive') destination += ` · ${this.stepText(m, this.dest.name)} ${this.inDistance(m.d - this.routeProg)}`;
     }
     this.onHud?.({
       street: this.streetName ?? (this.onRoad ? '' : 'Off road'),

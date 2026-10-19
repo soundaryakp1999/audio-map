@@ -19,6 +19,8 @@ export interface Maneuver {
   kind: 'continue' | 'bear' | 'turn' | 'sharp' | 'u-turn' | 'roundabout' | 'arrive' | 'cross';
   /** for a crossing: how it is controlled, e.g. "at the signals, audible signal" */
   via?: string;
+  /** for a crossing: metres from the kerb to the street's centre line, where d is measured */
+  kerb?: number;
   onto: string;
   ontoNamed: boolean;
   /** roundabout exit number */
@@ -253,6 +255,8 @@ export interface StreetCrossing {
   y: number;
   name: string;
   via?: string;
+  /** metres from the kerb to the centre line */
+  kerb?: number;
 }
 
 /**
@@ -269,7 +273,7 @@ export function addCrossings(r: Route, crossings: StreetCrossing[]) {
       if (m.kind === 'arrive' || m.kind === 'roundabout' || m.ontoNamed) continue;
       if (m.d <= c.d && c.d - m.d <= 15) m.trivial = true; // the step onto the crosswalk itself
     }
-    kept.push({ x: c.x, y: c.y, d: c.d, rel: 0, kind: 'cross', onto: c.name, ontoNamed: true, via: c.via, trivial: false });
+    kept.push({ x: c.x, y: c.y, d: c.d, rel: 0, kind: 'cross', onto: c.name, ontoNamed: true, via: c.via, kerb: c.kerb, trivial: false });
   }
   r.maneuvers = kept.sort((a, b) => a.d - b.d);
 }
