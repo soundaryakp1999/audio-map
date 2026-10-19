@@ -451,6 +451,14 @@ dialog#nav label {
 #phone[hidden] {
   display: none;
 }
+/* the screen scrolls; squeezing a part to fit would let its text spill over the next */
+#phone > * {
+  flex-shrink: 0;
+}
+/* the screen scrolls instead: squeezed, long directions would spill over what follows */
+#phone > * {
+  flex-shrink: 0;
+}
 /* first screen on a phone: only Begin and Full menu, which unlock sound, speech and location with a tap */
 #phone:not(.welcome) .ph-welcome,
 #phone.welcome > :not(.ph-welcome) {
@@ -517,6 +525,28 @@ dialog#nav label {
   font-size: 1.6rem;
 }
 #ph-grid[hidden] {
+  display: none;
+}
+/* the next turns, listed in place of the map */
+#ph-steps {
+  width: 100%;
+  min-height: 52px;
+}
+#phone.steps-open .ph-dirs {
+  min-height: 64px;
+}
+.ph-route {
+  margin: 0;
+  padding: 0 0 0 1.6em;
+  font-size: 1.15rem;
+  line-height: 1.4;
+}
+.ph-route li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.ph-route[hidden],
+#ph-steps[hidden] {
   display: none;
 }
 .ph-status {

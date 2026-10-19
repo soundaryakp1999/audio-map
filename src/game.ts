@@ -3478,6 +3478,26 @@ export class Game {
   }
 
   /**
+   * The next steps of the route, up to max, for the phone's list: the first from here ("In 40
+   * metres, turn right onto Elm Street"), each after it from the step before ("After 120 metres
+   * more, turn left onto Oak Street"). It ends at the destination when that comes first.
+   */
+  routeSteps(max = 5): string[] {
+    const r = this.route;
+    const dest = this.dest;
+    if (!r || !dest) return [];
+    const steps = r.maneuvers.slice(this.nextMan).filter((m) => !(m.kind === 'arrive' && r.partial) && !this.isTrivial(m)).slice(0, max);
+    const out: string[] = [];
+    let at = this.routeProg;
+    for (const m of steps) {
+      out.push(out.length ? `After ${fmtDistance(m.d - at, this.settings.units)} more, ${this.stepText(m, dest.name)}.` : `${this.stepWhen(m, m.d - at)}.`);
+      at = m.d;
+    }
+    if (r.partial && out.length < max) out.push('The route goes on as more of the map loads.');
+    return out;
+  }
+
+  /**
    * "In 40 metres, at the next intersection, turn left onto Oak Street". Within HERE, where GPS
    * cannot measure any closer: "Now, turn left onto Oak Street", or "Blue Cafe is very close".
    */
