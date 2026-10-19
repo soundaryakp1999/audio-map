@@ -378,6 +378,12 @@ table.keys {
   }
 }
 
+dialog .back {
+  display: block;
+  min-height: 44px;
+  margin-bottom: 8px;
+}
+
 dialog#ph-near {
   width: min(560px, calc(100vw - 16px));
   max-height: calc(100vh - 32px);

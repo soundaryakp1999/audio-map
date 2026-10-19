@@ -7,6 +7,7 @@ import { MapView } from './mapview';
 import { loadFavorites, removeFavorite } from './favorites';
 import { loadRecents } from './recents';
 import { geocode, type GeocodeResult } from './osm';
+import { addBackButtons, backClosesDialogs, goBack } from './back';
 import { UNMATCHED, byTierThenDistance, matchTier, mergeHits, type Hit } from './search';
 import { loadSettings, saveSettings, type Settings } from './settings';
 import { initPreview, stopPreview } from './preview';
@@ -840,7 +841,10 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   void navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 
-// A button for the dialogs that otherwise close only with Escape (touch); it cancels the way Escape does.
+// Buttons for the dialogs that otherwise close only with Escape (touch); they cancel the way Escape does.
 for (const b of document.querySelectorAll<HTMLButtonElement>('dialog [data-cancel]')) {
-  b.addEventListener('click', () => b.closest('dialog')!.dispatchEvent(new Event('cancel', { cancelable: true })));
+  b.addEventListener('click', () => goBack(b.closest('dialog')!));
 }
+// Back at the top of each dialog, so it is the first thing a screen reader finds; the menu has Resume
+addBackButtons(document, ['menu', 'osmnote']); // the map error report has its own Back between steps
+backClosesDialogs(document);
