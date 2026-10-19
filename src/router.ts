@@ -56,6 +56,8 @@ export interface RouteOptions {
 }
 
 const MAX_EXPANSIONS = 300_000;
+/** Search key for the goal itself, a point on a street rather than a node of the graph. */
+const GOAL = Number.MIN_SAFE_INTEGER;
 
 export function planRoute(
   w: World,
@@ -66,23 +68,42 @@ export function planRoute(
   const hit = w.nearestRoad(from.x, from.y, 60, o.canUse);
   if (!hit) return null;
 
-  // goal: the usable node closest to the target
-  let goal: GNode | null = null;
-  let goalD = Infinity;
-  const consider = (n: GNode) => {
-    if (!n.edges.some((e) => o.canUse(e.way))) return;
-    const d = dist(n.x, n.y, to.x, to.y);
-    if (d < goalD) {
-      goalD = d;
-      goal = n;
-    }
-  };
-  for (const n of w.nodesNear(to.x, to.y, 300)) consider(n);
-  if (!goal) for (const n of w.nodes.values()) consider(n);
-  if (!goal) return null;
-  const goalNode: GNode = goal;
-
   const allowed = (wy: Way, fwd: boolean) => !o.obeyOneway || !wy.oneway || fwd !== wy.onewayReverse;
+
+  // goal: the point on a usable street closest to the target, reached from either end of its
+  // segment. Ending at the nearest node instead could run on past a door partway along a block
+  // to the next junction, and come back.
+  const near = w.nearestRoad(to.x, to.y, 300, o.canUse);
+  let foot: { x: number; y: number; way: Way | null };
+  /** nodes the goal is reached from, with the cost of the last stretch */
+  const entries = new Map<number, number>();
+  if (near) {
+    foot = { x: near.hit.px, y: near.hit.py, way: near.seg.way };
+    const cf = o.costFactor(near.seg.way);
+    for (const [id, fwd] of [
+      [near.seg.a, true],
+      [near.seg.b, false],
+    ] as const) {
+      const n = w.nodes.get(id);
+      if (n && allowed(near.seg.way, fwd)) entries.set(id, dist(n.x, n.y, foot.x, foot.y) * cf);
+    }
+  } else {
+    // no street near the target: the usable node closest to it
+    let best: GNode | null = null;
+    let bestD = Infinity;
+    for (const n of w.nodes.values()) {
+      if (!n.edges.some((e) => o.canUse(e.way))) continue;
+      const d = dist(n.x, n.y, to.x, to.y);
+      if (d < bestD) {
+        bestD = d;
+        best = n;
+      }
+    }
+    if (!best) return null;
+    foot = { x: best.x, y: best.y, way: null };
+    entries.set(best.id, 0);
+  }
+  const estimate = (x: number, y: number) => dist(x, y, foot.x, foot.y) * o.minFactor;
 
   // start on both ends of the current segment, penalising the one behind us
   const g = new Map<number, number>();
@@ -102,30 +123,45 @@ export function planRoute(
     if (cost < (g.get(id) ?? Infinity)) {
       g.set(id, cost);
       via.set(id, seg.way);
-      heap.push(cost + dist(n.x, n.y, goalNode.x, goalNode.y) * o.minFactor, id);
+      heap.push(cost + estimate(n.x, n.y), id);
+    }
+  }
+  // already on the goal's own stretch of street: straight along it, if that way is allowed
+  if (near && near.seg.a === seg.a && near.seg.b === seg.b) {
+    const alongWay = near.hit.t >= hit.hit.t;
+    if (allowed(seg.way, alongWay)) {
+      const cost = dist(hit.hit.px, hit.hit.py, foot.x, foot.y) * o.costFactor(seg.way) + (alongWay !== forwards ? o.uTurnPenalty : 0);
+      g.set(GOAL, cost);
+      heap.push(cost, GOAL);
     }
   }
 
   // if the goal can't be reached (isolated road, one-way trap), fall back to the closest reachable node
   const closed = new Set<number>();
-  let end: GNode | null = null;
+  let reached = false;
   let closest: GNode | null = null;
   let closestD = Infinity;
   for (let i = 0; i < MAX_EXPANSIONS && heap.size; i++) {
     const id = heap.pop()!;
     if (closed.has(id)) continue;
     closed.add(id);
-    const n = w.nodes.get(id)!;
-    if (id === goalNode.id) {
-      end = n;
+    if (id === GOAL) {
+      reached = true;
       break;
     }
+    const n = w.nodes.get(id)!;
     const dn = dist(n.x, n.y, to.x, to.y);
     if (dn < closestD) {
       closestD = dn;
       closest = n;
     }
     const gn = g.get(id)!;
+    const last = entries.get(id);
+    if (last !== undefined && gn + last < (g.get(GOAL) ?? Infinity)) {
+      g.set(GOAL, gn + last);
+      prev.set(GOAL, id);
+      heap.push(gn + last, GOAL);
+    }
     for (const e of n.edges) {
       if (!o.canUse(e.way) || !allowed(e.way, e.fwd) || closed.has(e.to)) continue;
       const m = w.nodes.get(e.to)!;
@@ -134,17 +170,18 @@ export function planRoute(
         g.set(e.to, cost);
         prev.set(e.to, id);
         via.set(e.to, e.way);
-        heap.push(cost + dist(m.x, m.y, goalNode.x, goalNode.y) * o.minFactor, e.to);
+        heap.push(cost + estimate(m.x, m.y), e.to);
       }
     }
   }
-  if (!end) end = closest;
-  if (!end) return null;
-  const endD = dist(end.x, end.y, to.x, to.y);
+  const end = reached ? (prev.has(GOAL) ? w.nodes.get(prev.get(GOAL)!)! : null) : closest;
+  if (!reached && !end) return null;
+  const endPt = reached ? foot : end!;
+  const endD = dist(endPt.x, endPt.y, to.x, to.y);
   const partial = endD > Math.max(150, (to.radius ?? 0) + 100);
 
   const path: GNode[] = [];
-  for (let id: number | undefined = end.id; id !== undefined; id = prev.get(id)) path.push(w.nodes.get(id)!);
+  for (let id: number | undefined = end?.id; id !== undefined; id = prev.get(id)) path.push(w.nodes.get(id)!);
   path.reverse();
 
   const points: RoutePoint[] = [{ x: hit.hit.px, y: hit.hit.py, d: 0 }];
@@ -155,6 +192,9 @@ export function planRoute(
     ways.push(way);
   };
   for (const n of path) push(n.x, n.y, via.get(n.id) ?? null);
+  // along the goal's street to the point nearest the target (unless that is the node itself)
+  const lastPt = points[points.length - 1];
+  if (reached && foot.way && dist(lastPt.x, lastPt.y, foot.x, foot.y) > 0.5) push(foot.x, foot.y, foot.way);
   if (!partial && endD > 3) push(to.x, to.y, null); // last stretch to the door
 
   return { points, maneuvers: maneuvers(path, points, ways, o), length: points[points.length - 1].d, partial };
@@ -185,7 +225,8 @@ function classify(rel: number, sameRoad: boolean): Maneuver['kind'] {
 function maneuvers(path: GNode[], points: RoutePoint[], ways: (Way | null)[], o: RouteOptions): Maneuver[] {
   const out: (Maneuver & { inName: string; kStart: number })[] = [];
   // points[k] is path[k - 1]; ways[k] is the road used to reach points[k]
-  for (let k = 1; k < path.length; k++) {
+  // up to the path's last node too: the route may turn there onto the destination's own street
+  for (let k = 1; k <= path.length; k++) {
     const node = path[k - 1];
     const inWay = ways[k];
     const outWay = ways[k + 1];

@@ -15,7 +15,7 @@ const MID = (N - 1) / 2;
 export const SQUARES = [10, 20, 50];
 
 export interface PhoneGame {
-  readonly pose: { x: number; y: number; heading: number; live: boolean; ready: boolean; loadFailed: boolean; units: Units };
+  readonly pose: { x: number; y: number; heading: number; live: boolean; ready: boolean; loadFailed: boolean; mapVersion: number; units: Units };
   readonly hasDestination: boolean;
   describeAt(x: number, y: number): Promise<{ text: string; sound: AreaSound; named: boolean } | null>;
   hoodAt(x: number, y: number): Promise<string | null>;
@@ -88,6 +88,16 @@ export function cellPoint(cx: number, cy: number, up: number, size: number, row:
   return { x: cx + right * Math.cos(r) + ahead * Math.sin(r), y: cy - right * Math.sin(r) + ahead * Math.cos(r) };
 }
 
+/** The square (row * N + col) holding point (x, y) on a map drawn by cellPoint; -1 when it is off the map. */
+export function cellOf(cx: number, cy: number, up: number, size: number, x: number, y: number): number {
+  const r = (up * Math.PI) / 180;
+  const dx = x - cx;
+  const dy = y - cy;
+  const col = Math.round((dx * Math.cos(r) - dy * Math.sin(r)) / size + MID);
+  const row = Math.round(MID - (dx * Math.sin(r) + dy * Math.cos(r)) / size);
+  return row < 0 || row >= N || col < 0 || col >= N ? -1 : row * N + col + 0; // + 0: rounding just below zero gives -0
+}
+
 /** "40 metres ahead, 20 metres right" (travel) or "40 metres north, 20 metres east" (explore); '' for the centre. */
 export function offsetText(row: number, col: number, n: number, units: Units, travel: boolean): string {
   const unit = units === 'imperial' ? 'yard' : 'metre';
@@ -132,7 +142,7 @@ export class Phone {
   private sizeIdx = 1;
   private centre: { x: number; y: number } | null = null;
   private up: UpState | null = null;
-  private frame: { cx: number; cy: number; up: number; size: number; units: Units; mode: string } | null = null;
+  private frame: { cx: number; cy: number; up: number; size: number; units: Units; mode: string; ver: number } | null = null;
   private cells: (Cell | null)[] = [];
   private buttons: HTMLButtonElement[] = [];
   /** the square last double tapped; kept when the map moves on, so Set as destination still means it */
@@ -140,6 +150,8 @@ export class Phone {
   private seq = 0;
   private timer: ReturnType<typeof setInterval> | undefined;
   private touching = false;
+  /** the square marked as where you are, or -1 */
+  private meIdx = -1;
   private lastHover = -1;
   private started = false;
 
@@ -170,8 +182,9 @@ export class Phone {
       this.touching = false;
       this.lastHover = -1;
     };
-    grid.addEventListener('pointerup', lift);
-    grid.addEventListener('pointercancel', lift);
+    // on the whole page: a mouse let go outside the map would otherwise leave every later move over it spoken
+    document.addEventListener('pointerup', lift);
+    document.addEventListener('pointercancel', lift);
 
     this.el('ph-dirs').addEventListener('click', () => this.game((g) => g.announce(this.el('ph-dirs').textContent ?? '')));
     this.el('ph-where').addEventListener('click', () => this.hooks.openSearch());
@@ -317,6 +330,7 @@ export class Phone {
   setMode(mode: 'travel' | 'explore', announce: boolean) {
     this.mode = mode;
     const travel = mode === 'travel';
+    if (!travel) this.centre = null; // explore starts around you, not where it was last panned to
     this.el('ph-travel').hidden = !travel;
     this.el('ph-explore').hidden = travel;
     this.el('ph-mode').textContent = travel ? 'Travel mode. Switch to explore' : 'Explore mode. Switch to travel';
@@ -365,9 +379,19 @@ export class Phone {
       cy = this.centre.y;
     }
     const f = this.frame;
-    if (!f || f.up !== up || f.size !== size || f.units !== units || f.mode !== this.mode || dist(f.cx, f.cy, cx, cy) > size / 2) {
-      this.frame = { cx, cy, up, size, units, mode: this.mode };
+    // a newly arrived map can fill in squares that were not loaded, or correct them
+    const moved = !f || f.up !== up || f.size !== size || f.units !== units || f.mode !== this.mode || dist(f.cx, f.cy, cx, cy) > size / 2;
+    if (moved || f.ver !== p.mapVersion) {
+      this.frame = { cx, cy, up, size, units, mode: this.mode, ver: p.mapVersion };
       void this.render();
+    }
+    // where you are: the centre in travel mode; in explore mode wherever the panning has left you, if on the map
+    const fr = this.frame!;
+    const me = cellOf(fr.cx, fr.cy, fr.up, fr.size, p.x, p.y);
+    if (me !== this.meIdx) {
+      this.buttons[this.meIdx]?.classList.remove('me');
+      this.buttons[me]?.classList.add('me');
+      this.meIdx = me;
     }
     const n = SQUARES[this.sizeIdx];
     const unit = units === 'imperial' ? 'yard' : 'metre';
@@ -403,7 +427,6 @@ export class Phone {
     this.select(-1);
     found.forEach((c, i) => {
       const b = this.buttons[i];
-      b.classList.toggle('me', i === (N * N - 1) / 2);
       if (!c) {
         b.textContent = '';
         b.setAttribute('aria-label', 'Not loaded yet');
