@@ -1235,6 +1235,14 @@ describe('arrival hint', () => {
   });
 });
 
+describe('recent destinations', () => {
+  it('records each destination set', () => {
+    const { g } = setup();
+    g.setTarget({ name: 'Elm End', x: 150, y: 200 });
+    expect(JSON.parse(memory.get('audio-map-recents')!)[0].name).toBe('Elm End');
+  });
+});
+
 describe('crossing advice', () => {
   it('says what to wait for from how the crossing is mapped', () => {
     expect(crossingAdvice('Crossing with signals', ['push button', 'audible signal'])).toBe('At the signal crossing. Press the button. Wait for the audible signal, then check for traffic before crossing.');

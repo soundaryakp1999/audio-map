@@ -5,6 +5,7 @@ import { Game } from './game';
 import type { LatLon } from './geo';
 import { MapView } from './mapview';
 import { loadFavorites, removeFavorite } from './favorites';
+import { loadRecents } from './recents';
 import { geocode, type GeocodeResult } from './osm';
 import { loadSettings, saveSettings, type Settings } from './settings';
 import { initPreview, stopPreview } from './preview';
@@ -477,7 +478,20 @@ function showFavorites() {
   const list = $<HTMLUListElement>('nav-results');
   list.replaceChildren();
   const favs = loadFavorites();
-  $('nav-status').textContent = favs.length ? `${favs.length} saved places. Choose one, or search.` : 'No saved places yet. Press Y in the explorer to save one.';
+  const recents = loadRecents();
+  $('nav-status').textContent =
+    favs.length || recents.length
+      ? `${recents.length} recent, ${favs.length} saved places. Choose one, or search.`
+      : 'No saved places yet. Press Y in the explorer to save one.';
+  for (const f of recents) {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = `Recent: ${f.name}, ${game?.describeFromHere(f.lat, f.lon) ?? ''}`;
+    b.addEventListener('click', () => pickDestination(f.name, f.lat, f.lon, 0));
+    li.append(b);
+    list.appendChild(li);
+  }
   for (const f of favs) {
     const li = document.createElement('li');
     const b = document.createElement('button');

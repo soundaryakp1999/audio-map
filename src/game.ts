@@ -12,6 +12,7 @@ import { crossingLeg, drivesOnLeft, locate, routesText, spotText, stopDetail } f
 import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
 import { addFavorite } from './favorites';
+import { addRecent } from './recents';
 import { DEFAULT_ACCURACY, LiveGps, POOR_ACCURACY, easeAngle, fuse, pickHeading, snapRadius, type Estimate, type GpsFix } from './gps';
 import { loadNotes, saveNotes } from './notes';
 import { fmtDistance, fmtSpeed, fmtSpeedShort, saveSettings, type Settings, type VehicleId } from './settings';
@@ -3444,6 +3445,7 @@ export class Game {
       return this.speech.say(`You are already at ${t.name}.`, 'high');
     }
     this.dest = t;
+    addRecent({ name: t.name, ...this.proj.toLatLon(t.x, t.y) });
     this.trip = { t0: this.clock, meters: 0, streets: [] };
     this.nextBeacon = 0;
     this.dropCorridor();
