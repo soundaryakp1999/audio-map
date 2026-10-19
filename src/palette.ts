@@ -65,6 +65,8 @@ export const ACTIONS: Action[] = [
   a('Where am I', 'whereAmI'),
   a('Look around: hear what is where you point', 'lookAround'),
   a('Look ahead: hear what is the way you are walking', 'lookAhead'),
+  a('Hear places from farther away', 'radiusUp'),
+  a('Hear places from nearer', 'radiusDown'),
   a('Emergency: say and share my location', 'sos'),
   a('Preview route', 'preview'),
   a('Next bus stop or station', 'transit'),

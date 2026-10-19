@@ -178,6 +178,8 @@ export class Phone {
     });
     this.el('ph-sos').addEventListener('click', () => this.action('sos'));
     this.el('ph-offline').addEventListener('click', () => this.action('saveOffline'));
+    this.el('ph-farther').addEventListener('click', () => this.action('radiusUp'));
+    this.el('ph-nearer').addEventListener('click', () => this.action('radiusDown'));
     this.el('ph-look').addEventListener('click', () => this.action('lookAround'));
     this.el('ph-ahead').addEventListener('click', () => this.action('lookAhead'));
     this.el('ph-shake').addEventListener('click', () => (this.el('ph-shake').textContent = this.hooks.toggleShake()));

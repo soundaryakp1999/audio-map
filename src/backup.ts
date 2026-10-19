@@ -39,7 +39,7 @@ const GROUPS = ['food', 'shop', 'transport', 'culture', 'nature', 'health', 'ser
 const VEHICLES = ENUMS.vehicle;
 const PROFILES = ENUMS.soundProfile;
 const CUSTOM_PLACES = ['all', 'notable', 'landmarks', 'none'];
-const RANGES: Record<string, [number, number]> = { voiceRate: [0.5, 3], volume: [0, 1] };
+const RANGES: Record<string, [number, number]> = { voiceRate: [0.5, 3], volume: [0, 1], radiusScale: [0.5, 3] };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const coord = (v: unknown, max: number): v is number => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= max;

@@ -1499,6 +1499,24 @@ export class Game {
     return this.dark;
   }
 
+  private static readonly RADIUS_STEPS = [0.5, 1, 2, 3];
+
+  /** A usual reach stretched by the player's setting, kept inside the area that is loaded. */
+  private reach(base: number): number {
+    return Math.min(base * this.settings.radiusScale, this.vehicle.loadRadius * 0.9);
+  }
+
+  /** Ctrl ] and Ctrl [: announce places from farther or nearer. */
+  private changeRadius(dir: 1 | -1) {
+    const steps = Game.RADIUS_STEPS;
+    const now = steps.reduce((best, s, i) => (Math.abs(s - this.settings.radiusScale) < Math.abs(steps[best] - this.settings.radiusScale) ? i : best), 0);
+    const next = Math.max(0, Math.min(steps.length - 1, now + dir));
+    if (next === now) return this.speech.say(dir > 0 ? 'Already at the farthest.' : 'Already at the nearest.', 'high');
+    this.settings.radiusScale = steps[next];
+    saveSettings(this.settings);
+    this.speech.say(`Hearing places within ${fmtDistance(this.reach(this.vehicle.scanRadius), this.settings.units)}.`, 'high');
+  }
+
   private lookOn = false;
   private lookHeading = NaN;
   private lookSince = 0;
@@ -1533,7 +1551,7 @@ export class Game {
   /** The nearest places and the nearest intersection within 30 degrees of a direction, as speech. */
   private lookText(heading: number): string {
     const u = this.settings.units;
-    const reach = this.vehicle.scanRadius;
+    const reach = this.reach(this.vehicle.scanRadius);
     const inCone = (x: number, y: number) => Math.abs(relAngle(heading, bearingTo(this.x, this.y, x, y))) <= 30;
     const items = this.nearby(reach)
       .filter(({ place }) => inCone(place.x, place.y))
@@ -1587,7 +1605,7 @@ export class Game {
     if (!this.settings.announcePlaces || this.speed < 0.3) return;
     // faster vehicles pass places quicker, so leave longer between cues
     if (this.clock - this.lastPlaceSpoken < placeSpeechGap(this.speed)) return;
-    for (const { place, d } of this.world!.placesNear(this.x, this.y, this.vehicle.passRadius)) {
+    for (const { place, d } of this.world!.placesNear(this.x, this.y, this.reach(this.vehicle.passRadius))) {
       if (!placeWanted(this.settings, this.vehicle.id, place)) continue;
       const last = this.announcedPlaces.get(place.id) ?? -1e9;
       if (this.clock - last < 180) continue;
@@ -1595,7 +1613,7 @@ export class Game {
       if (Math.abs(rel) > 120 && d > 10) continue; // already passed it
       this.announcedPlaces.set(place.id, this.clock);
       // nearer is louder and clearer; landmarks stand out over everyday places
-      const far = Math.min(1, d / this.vehicle.passRadius);
+      const far = Math.min(1, d / this.reach(this.vehicle.passRadius));
       const level = (0.1 + 0.2 * (1 - far)) * (placeTier(place) >= 2 ? 1.4 : 1) * cueLevelScale(this.speed, this.speaking);
       this.audio.placeCue(place.group, rel, level, undefined, far);
       const spot = this.placeDetail(place).short;
@@ -2368,6 +2386,10 @@ export class Game {
         return this.onOsmNote?.(this.proj.toLatLon(this.x, this.y));
       case 'share':
         return void this.shareLink();
+      case 'radiusUp':
+        return this.changeRadius(1);
+      case 'radiusDown':
+        return this.changeRadius(-1);
       case 'lookAround':
         return this.toggleLookAround();
       case 'lookAhead':
@@ -2500,7 +2522,7 @@ export class Game {
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, Shift L live GPS: your real position and compass move you, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
         'F3 grid mode: arrows step north, south, west and east with a sound for the ground, minus and equals change the step, Space says where you are. ' +
-        'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. ' + `${this.keyText('navigate')} searches for a destination. ` + 'D says the distance to go, D twice switches walking routes between shortest and streets only, ' + `${this.keyText('turnByTurn')} toggles turn by turn directions,` + ' I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it, Control V reports a wrong or missing road or place to OpenStreetMap. Z copies a link to this spot and route, Shift Z saves the route as a GPX file, Shift S saves the map here for offline use. U says how the trip went. E says where you are with the nearest landmark and stop, and the way back to the route if you have left it. Shift E turns look around on: point the phone a way and hold still to hear what lies there. Shift I says what lies ahead, the way you are walking. Shift K says your address and shares your location as a map link. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. Shift X says the nearest entrances, platforms and lifts, Shift O the nearest toilets, bench, drinking water, shelter, post box and cash machine. Shift T reads the next departures when you stand at a stop, using the open Transitous feed, which covers much of Europe, North America and Australia. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. Control Shift P opens the command palette: type to find any action. ' +
+        'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. ' + `${this.keyText('navigate')} searches for a destination. ` + 'D says the distance to go, D twice switches walking routes between shortest and streets only, ' + `${this.keyText('turnByTurn')} toggles turn by turn directions,` + ' I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it, Control V reports a wrong or missing road or place to OpenStreetMap. Z copies a link to this spot and route, Shift Z saves the route as a GPX file, Shift S saves the map here for offline use. U says how the trip went. E says where you are with the nearest landmark and stop, and the way back to the route if you have left it. Shift E turns look around on: point the phone a way and hold still to hear what lies there. Shift I says what lies ahead, the way you are walking. Control right bracket hears places from farther, Control left bracket from nearer. Shift K says your address and shares your location as a map link. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. Shift X says the nearest entrances, platforms and lifts, Shift O the nearest toilets, bench, drinking water, shelter, post box and cash machine. Shift T reads the next departures when you stand at a stop, using the open Transitous feed, which covers much of Europe, North America and Australia. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. Control Shift P opens the command palette: type to find any action. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. Sound themes are chosen in settings or from the command palette. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
@@ -3138,8 +3160,9 @@ export class Game {
   }
 
   private whatsAround() {
-    const list = this.nearby(this.vehicle.scanRadius).slice(0, 6);
-    if (!list.length) return this.speech.say(`No ${this.filterLabel()}places within ${fmtDistance(this.vehicle.scanRadius, this.settings.units)}.`, 'high');
+    const reach = this.reach(this.vehicle.scanRadius);
+    const list = this.nearby(reach).slice(0, 6);
+    if (!list.length) return this.speech.say(`No ${this.filterLabel()}places within ${fmtDistance(reach, this.settings.units)}.`, 'high');
     const text = list
       .map(({ place, d }) => `${this.placeText(place)}, ${fmtDistance(d, this.settings.units)} ${this.dirTo(place.x, place.y)}`)
       .join('. ');

@@ -1402,3 +1402,28 @@ describe('look around', () => {
     expect(said.at(-1)).toBe('South: nothing mapped within 150 metres.');
   });
 });
+
+describe('announce radius', () => {
+  it('steps the walker reach farther and nearer, and stops at the ends', () => {
+    const { game, said, g } = setup();
+    game.run(']', { ctrl: true });
+    expect(g.settings.radiusScale).toBe(2);
+    expect(said.at(-1)).toBe('Hearing places within 300 metres.');
+    game.run(']', { ctrl: true });
+    game.run(']', { ctrl: true });
+    expect(said.at(-1)).toBe('Already at the farthest.');
+    for (let i = 0; i < 4; i++) game.run('[', { ctrl: true });
+    expect(g.settings.radiusScale).toBe(0.5);
+    expect(said.at(-1)).toBe('Already at the nearest.');
+  });
+
+  it('narrows what W lists', () => {
+    const { game, said, g } = setup();
+    g.settings.radiusScale = 0.5; // 75 m reach (said as 80): the cafe at about 51 m is in
+    game.run('w');
+    expect(said.at(-1)).toMatch(/Blue Cafe/);
+    g.y = 400;
+    game.run('w');
+    expect(said.at(-1)).toBe('No places within 80 metres.');
+  });
+});
