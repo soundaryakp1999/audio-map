@@ -662,6 +662,7 @@ export class Game {
         throttle: this.throttle,
         surface: this.grid ? 'paved' : !this.onRoad && this.vehicle.id !== 'helicopter' ? 'offroad' : this.road?.surface && ROUGH.has(this.road.surface) ? 'rough' : 'paved',
         tunnel: !this.grid && !!this.road?.tunnel && this.onRoad,
+        wind: !(this.live && this.liveFix),
       },
       dt,
     );

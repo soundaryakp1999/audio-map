@@ -11,6 +11,8 @@ export interface EngineState {
   throttle: number; // -1 braking .. 0 coasting .. 1 accelerating
   surface: 'paved' | 'rough' | 'offroad';
   tunnel: boolean;
+  /** false when you are really moving (live GPS): the air around you is real, so no wind sound */
+  wind?: boolean;
 }
 
 const GROUP_PITCH: Record<PlaceGroup, number> = {
@@ -159,7 +161,7 @@ export class AudioEngine {
     const t = this.now;
     this.voice?.update(s, dt);
     const r = s.speed / Math.max(1, s.maxSpeed);
-    this.wind.gain.gain.setTargetAtTime(Math.min(0.08, 0.007 + r * r * 0.08) * (s.speed > 0.3 ? 1 : 0), t, 0.2);
+    this.wind.gain.gain.setTargetAtTime(Math.min(0.08, 0.007 + r * r * 0.08) * (s.speed > 0.3 && s.wind !== false ? 1 : 0), t, 0.2);
     this.wind.filter.frequency.setTargetAtTime(300 + r * 900, t, 0.2);
     this.reverbSend.gain.setTargetAtTime(s.tunnel ? 0.7 : 0, t, 0.3);
   }
