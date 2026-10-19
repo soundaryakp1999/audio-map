@@ -1027,6 +1027,18 @@ describe('phone screen', () => {
     expect(game.directionsText()).toMatch(/^In 150 metres, .*turn right onto Elm Street\.$/);
   });
 
+  it('lists the next turns for the phone, each after the one before, ending at the destination', async () => {
+    const { game } = setup();
+    expect(game.routeSteps()).toEqual([]);
+    game.setTarget({ name: 'Elm End', x: 150, y: 200 });
+    await flush();
+    const steps = game.routeSteps(5);
+    expect(steps[0]).toMatch(/^In 150 metres, .*turn right onto Elm Street\.$/);
+    expect(steps.at(-1)).toMatch(/^After \d+ metres more, arrive at Elm End\.$/);
+    expect(steps).toHaveLength(2);
+    expect(game.routeSteps(1)).toHaveLength(1);
+  });
+
   it('says "now" instead of a distance once closer than GPS can tell', async () => {
     const { game, g } = setup();
     game.setTarget({ name: 'Elm End', x: 150, y: 200 });

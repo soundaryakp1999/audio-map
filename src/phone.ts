@@ -22,6 +22,8 @@ export interface PhoneGame {
   areaCue(sound: AreaSound): void;
   streetUp(heading: number): { dir: number; street?: string };
   directionsText(): string;
+  /** the next few steps of the route, nearest first */
+  routeSteps(max?: number): string[];
   announce(text: string): void;
   setTarget(t: { name: string; x: number; y: number }): void;
   nearbyList(group: PlaceGroup | null): { id: string; text: string }[];
@@ -58,13 +60,15 @@ const NEAR_KINDS: [PlaceGroup | null, string][] = [
   ['service', 'Services'],
 ];
 
-const MAP_KEY = 'audio-map-phone-map';
+// a new key: the first one stored "shown" on every visit, so a hidden default would never take hold
+const MAP_KEY = 'audio-map-phone-map-v2';
 
+/** Whether the touch map is wanted in travel mode: hidden unless Show map was chosen. */
 function loadMapShown(): boolean {
   try {
-    return localStorage.getItem(MAP_KEY) !== 'hidden';
+    return localStorage.getItem(MAP_KEY) === 'shown';
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -213,8 +217,20 @@ export class Phone {
     this.el('ph-voice').addEventListener('click', () => (this.el('ph-voice').textContent = this.hooks.toggleVoice()));
     this.el('ph-menu').addEventListener('click', () => this.hooks.openMenu());
     this.el('ph-map').addEventListener('click', () => {
-      this.showMap(!this.mapShown);
+      this.mapShown = !this.mapShown;
+      try {
+        localStorage.setItem(MAP_KEY, this.mapShown ? 'shown' : 'hidden');
+      } catch {
+        // ignore
+      }
+      this.applyMap();
       this.game((g) => g.announce(this.mapShown ? 'Map shown.' : 'Map hidden. The directions and buttons stay.'));
+    });
+    this.el('ph-steps').addEventListener('click', () => {
+      this.stepsOpen = !this.stepsOpen;
+      this.applyMap();
+      this.showSteps();
+      if (this.stepsOpen && !this.el('ph-route').children.length) this.game((g) => g.announce('No route yet. Choose a destination: tap Where to.'));
     });
     this.el('ph-mode').addEventListener('click', () => this.setMode(this.mode === 'travel' ? 'explore' : 'travel', true));
   }
@@ -223,21 +239,51 @@ export class Phone {
     return !this.root.hidden;
   }
 
-  /** Whether the touch map is on screen; remembered between visits. Hidden, the directions and buttons have the room. */
+  /**
+   * Whether travel mode shows the touch map; off until Show map is chosen, then remembered.
+   * Hidden, the directions and buttons have the room. Explore mode is the map, so it always shows it.
+   */
   private mapShown = loadMapShown();
 
-  private showMap(on: boolean) {
-    this.mapShown = on;
-    this.el('ph-grid').hidden = !on;
+  /** the list of next turns, shown in place of the map when it is hidden */
+  private stepsOpen = false;
+
+  private get gridOn(): boolean {
+    return this.mode === 'explore' || this.mapShown;
+  }
+
+  private applyMap() {
+    const on = this.gridOn;
+    const grid = this.el('ph-grid');
+    if (on && grid.hidden) this.frame = null; // it was not kept up to date while hidden
+    grid.hidden = !on;
     this.el('ph-dest').hidden = !on; // squares are chosen on the map
-    this.el('ph-map').textContent = on ? 'Hide map' : 'Show map';
+    this.el('ph-status').hidden = !on; // which way is up and the square size: about the map
+    this.el('ph-map').hidden = this.mode === 'explore';
+    this.el('ph-map').textContent = this.mapShown ? 'Hide map' : 'Show map';
     this.root.classList.toggle('no-map', !on);
-    if (on) this.frame = null; // it was not kept up to date while hidden
-    try {
-      localStorage.setItem(MAP_KEY, on ? 'shown' : 'hidden');
-    } catch {
-      // ignore
-    }
+    const steps = this.el('ph-steps');
+    steps.hidden = on || this.mode !== 'travel';
+    steps.setAttribute('aria-expanded', String(this.stepsOpen));
+    steps.textContent = this.stepsOpen ? 'Hide next turns' : 'Show next turns';
+    this.el('ph-route').hidden = steps.hidden || !this.stepsOpen;
+    this.root.classList.toggle('steps-open', !this.el('ph-route').hidden);
+  }
+
+  /**
+   * Keep the list of next turns current. Rows change in place, and only when their words do, so a
+   * screen reader resting on one is not thrown back to the top as you walk.
+   */
+  private showSteps() {
+    const list = this.el('ph-route');
+    if (list.hidden) return;
+    const lines = this.getGame()?.routeSteps(5) ?? [];
+    while (list.children.length > lines.length) list.lastElementChild!.remove();
+    lines.forEach((text, i) => {
+      let li = list.children[i] as HTMLLIElement | undefined;
+      if (!li) li = list.appendChild(document.createElement('li'));
+      if (li.textContent !== text) li.textContent = text;
+    });
   }
 
   /** The first screen on a phone: Begin (which, being a tap, may start sound, speech and location) or the full menu. */
@@ -249,7 +295,6 @@ export class Phone {
 
   show(mode: 'travel' | 'explore') {
     this.root.hidden = false;
-    this.showMap(this.mapShown);
     this.root.classList.remove('welcome');
     this.el('ph-voice').textContent = this.hooks.voiceLabel();
     this.el('ph-shake').textContent = this.hooks.shakeLabel();
@@ -274,11 +319,14 @@ export class Phone {
     this.el('ph-mode').textContent = travel ? 'Travel mode. Switch to explore' : 'Explore mode. Switch to travel';
     this.frame = null; // draw afresh for the new mode
     this.up = null;
+    this.applyMap();
     if (announce)
       this.game((g) =>
         g.announce(
           travel
-            ? 'Travel mode. The map follows you, with up the street you face. Touch a square to hear what is there.'
+            ? this.mapShown
+              ? 'Travel mode. The map follows you, with up the street you face. Touch a square to hear what is there.'
+              : 'Travel mode. Directions and buttons; Show map adds a touch map around you.'
             : 'Explore mode. North is up. Pan and zoom with the buttons below the map.',
         ),
       );
@@ -320,13 +368,14 @@ export class Phone {
     const dirs = travel ? g.directionsText() || (g.hasDestination ? '' : 'Choose a destination: tap Where to.') : 'Exploring. Touch the map, or pan with the buttons.';
     const d = this.el('ph-dirs');
     if (dirs && d.textContent !== dirs) d.textContent = dirs;
+    this.showSteps();
   }
 
   /** Work out what every square holds and label it. */
   private async render() {
     const g = this.getGame();
     const f = this.frame;
-    if (!g || !f || !this.mapShown) return;
+    if (!g || !f || !this.gridOn) return;
     const seq = ++this.seq;
     const travel = f.mode === 'travel';
     const n = SQUARES[this.sizeIdx];
