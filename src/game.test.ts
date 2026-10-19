@@ -1037,6 +1037,27 @@ describe('phone screen', () => {
     expect(said.at(-1)).toMatch(/^Unlit path ahead, 20 metres/);
   });
 
+  it('vibrates for a hazard, and not when haptics are off', () => {
+    const vibrate = vi.fn();
+    vi.stubGlobal('navigator', { vibrate });
+    const { g } = setup();
+    g.world.addPlaces({ places: [], signals: new Set<number>(), unlit: [ll(0, 70)] });
+    g.speed = 1.4;
+    g.dark = true;
+    g.darkCheckedAt = g.clock;
+    g.checkHazards();
+    expect(vibrate).toHaveBeenCalledWith([500]);
+    vibrate.mockClear();
+    g.announcedHazards.clear();
+    g.settings.haptics = false;
+    g.checkHazards();
+    expect(vibrate).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    vi.stubGlobal('window', { dispatchEvent: () => true });
+    vi.stubGlobal('localStorage', { getItem: (k: string) => memory.get(k) ?? null, setItem: (k: string, v: string) => void memory.set(k, v), removeItem: (k: string) => void memory.delete(k) });
+  });
+
   it('Shift S fetches the map here and at the destination, and says so when it fails', async () => {
     vi.mocked(fetchTileArea).mockResolvedValue({ roads: rawRoads(), places: { places: [], signals: new Set<number>() } });
     vi.mocked(fetchPlaces).mockResolvedValue({ places: [], signals: new Set<number>() });

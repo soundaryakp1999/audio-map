@@ -21,6 +21,8 @@ export interface Settings {
   unitsChosen: boolean;
   announcePlaces: boolean;
   announceHazards: boolean;
+  /** vibrate for turns, hazards, wrong way and arrival (phones that support it) */
+  haptics: boolean;
   announceStreets: boolean;
   announceHeadingAfterTurn: boolean;
   compassTicks: boolean;
@@ -53,6 +55,7 @@ const DEFAULTS: Settings = {
   unitsChosen: false,
   announcePlaces: true,
   announceHazards: true,
+  haptics: true,
   announceStreets: true,
   announceHeadingAfterTurn: true,
   compassTicks: true,
