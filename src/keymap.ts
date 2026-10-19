@@ -47,6 +47,7 @@ export const DEFAULT_KEYS = {
   whereAmI: [k('e')],
   lookAround: [k('e', true)],
   lookAhead: [k('i', true)],
+  openInMaps: [k('m', true)],
   radiusUp: [k(']', false, true)],
   radiusDown: [k('[', false, true)],
   sos: [k('k', true)],

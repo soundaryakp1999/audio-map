@@ -178,6 +178,7 @@ export class Phone {
     });
     this.el('ph-sos').addEventListener('click', () => this.action('sos'));
     this.el('ph-offline').addEventListener('click', () => this.action('saveOffline'));
+    this.el('ph-maps').addEventListener('click', () => this.action('openInMaps'));
     this.el('ph-farther').addEventListener('click', () => this.action('radiusUp'));
     this.el('ph-nearer').addEventListener('click', () => this.action('radiusDown'));
     this.el('ph-look').addEventListener('click', () => this.action('lookAround'));

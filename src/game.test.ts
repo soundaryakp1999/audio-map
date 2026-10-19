@@ -1427,3 +1427,21 @@ describe('announce radius', () => {
     expect(said.at(-1)).toBe('No places within 80 metres.');
   });
 });
+
+describe('open in maps app', () => {
+  it('hands the destination to the maps app and turns its own directions off', () => {
+    const open = vi.fn();
+    vi.stubGlobal('window', { dispatchEvent: () => true, open });
+    const { game, said, g } = setup();
+    game.run('M', { shift: true });
+    expect(said.at(-1)).toMatch(/^No destination/);
+    g.dest = { name: 'Elm End', x: 150, y: 200 };
+    g.settings.turnByTurn = true;
+    game.run('M', { shift: true });
+    expect(open).toHaveBeenCalledOnce();
+    expect(open.mock.calls[0][0]).toMatch(/^https:\/\/www\.google\.com\/maps\/dir\/\?api=1&destination=51\.\d+,-?0\.\d+&travelmode=walking$/);
+    expect(g.settings.turnByTurn).toBe(false);
+    expect(said.at(-1)).toMatch(/^Opening Elm End in your maps app\. Turn by turn here is off/);
+    vi.stubGlobal('window', { dispatchEvent: () => true });
+  });
+});
