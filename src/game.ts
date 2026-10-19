@@ -1579,6 +1579,20 @@ export class Game {
     }
   }
 
+  /** On arrival: which way the entrance (or, failing that, the place itself) is. */
+  private arrivalHint(t: Target): string {
+    const place = this.world?.places.find((p) => p.id === t.placeId);
+    const door = place?.entrances
+      ?.map((e) => ({ e, d: dist(this.x, this.y, e.x, e.y) }))
+      .sort((a, b) => a.d - b.d)[0];
+    const to = door ? door.e : t;
+    const d = dist(this.x, this.y, to.x, to.y);
+    const side = sideWord(relAngle(this.heading, bearingTo(this.x, this.y, to.x, to.y)));
+    const u = this.settings.units;
+    if (door) return ` The ${door.e.label ?? (door.e.main ? 'main entrance' : 'nearest entrance')} is ${fmtDistance(d, u)} ${side}.`;
+    return d < 4 ? '' : ` It is ${fmtDistance(d, u)} ${side}.`;
+  }
+
   private get arriveRadius() {
     return this.vehicle.id === 'helicopter' ? 60 : this.vehicle.id === 'car' ? 25 : 12;
   }
@@ -1590,7 +1604,7 @@ export class Game {
       this.audio.arrival();
       const done = this.trip ? ` Trip: ${this.tripText(this.trip)}. Press U to hear it again.` : '';
       this.lastTrip = this.trip ? `Last trip to ${this.dest.name}: ${this.tripText(this.trip)}.` : '';
-      this.speech.say(`Arrived at ${this.dest.name}.${done}`, 'high');
+      this.speech.say(`Arrived at ${this.dest.name}.${this.arrivalHint(this.dest)}${done}`, 'high');
       this.trip = null;
       this.dest = null;
       this.map.setDestination(null);

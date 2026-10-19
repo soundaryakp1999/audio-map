@@ -1215,6 +1215,26 @@ describe('turn reminder distances', () => {
   });
 });
 
+describe('arrival hint', () => {
+  it('names the nearest entrance and which side it is on', () => {
+    const { g } = setup();
+    const door = ll(15, 50);
+    const rp = { id: 'w1', lat: ll(30, 50).lat, lon: ll(30, 50).lon, tags: { amenity: 'library', name: 'Library' }, entrances: [{ ...door, tags: { entrance: 'main' } }] };
+    g.world.addPlaces({ places: [rp], signals: new Set<number>() });
+    const t = { name: 'Library', x: 30, y: 50, placeId: 'w1' };
+    expect(g.arrivalHint(t)).toBe(' The main entrance is 15 metres on your right.');
+    expect(g.arrivalHint({ name: 'Shop', x: 0, y: 70 })).toBe(' It is 20 metres ahead.');
+    expect(g.arrivalHint({ name: 'Here', x: 0, y: 51 })).toBe('');
+  });
+
+  it('adds the hint to the arrival announcement', () => {
+    const { g, said } = setup();
+    g.dest = { name: 'Shop', x: 2, y: 55 };
+    g.updateDestination();
+    expect(said.at(-1)).toMatch(/^Arrived at Shop\. It is 5 metres ahead right\./);
+  });
+});
+
 describe('crossing advice', () => {
   it('says what to wait for from how the crossing is mapped', () => {
     expect(crossingAdvice('Crossing with signals', ['push button', 'audible signal'])).toBe('At the signal crossing. Press the button. Wait for the audible signal, then check for traffic before crossing.');
