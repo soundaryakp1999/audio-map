@@ -85,6 +85,14 @@ describe('commands', () => {
     expect(said.at(-1)).toBe('No destination. Press Control K to choose one.');
   });
 
+  it('says the new heading after a turn by swipe or voice, as releasing the key does', () => {
+    const { game, said } = setup();
+    game.run('ArrowRight', { shift: true });
+    expect(said.at(-1)).toBe('10, north');
+    game.run('ArrowLeft', { ctrl: true }); // onto the next road says where it turned you itself
+    expect(said.at(-1)).not.toMatch(/^\d+, /);
+  });
+
   it('H reports compass heading', () => {
     const { game, said, g } = setup();
     g.heading = 90;
@@ -1079,6 +1087,21 @@ describe('phone screen', () => {
     expect(await game.describeAt(0, 100)).toEqual({ text: 'Oak Street', sound: 'road', named: true });
     expect(await game.describeAt(20, 100)).toEqual({ text: 'building number 12 on Oak Street', sound: 'building', named: true });
     expect(await game.hoodAt(20, 100)).toBe('Kala Ghoda');
+  });
+
+  it('loads the streets around a spot the explore map is panned to, beyond the map around you', async () => {
+    const { game, g } = setup();
+    g.areas = { at: vi.fn(async () => ({ key: 'open', sound: 'open', kind: 'open ground' })), hood: vi.fn(async () => null) };
+    const far: RawRoads = { nodes: new Map([[21, ll(-100, 3000)], [22, ll(100, 3000)]]), ways: [{ id: 30, nodes: [21, 22], tags: { highway: 'residential', name: 'Far Road' } }] };
+    vi.mocked(fetchTileArea).mockResolvedValue({ roads: far, places: { places: [], signals: new Set() } });
+    const version = game.pose.mapVersion;
+    expect(await game.describeAt(0, 3000)).toBeNull(); // not "open ground": its streets are not loaded yet
+    await flush();
+    expect(game.pose.mapVersion).toBe(version + 1); // the phone describes its squares again
+    expect(await game.describeAt(0, 3000)).toEqual({ text: 'Far Road', sound: 'road', named: true });
+    expect(await game.describeAt(20, 3010)).toMatchObject({ text: 'open ground' });
+    expect(fetchTileArea).toHaveBeenCalledTimes(1);
+    expect(await game.describeAt(0, 100)).toMatchObject({ text: 'Oak Street' }); // near you: your own map
   });
 
   it('gives the next instruction as text for the directions panel', async () => {

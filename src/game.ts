@@ -177,6 +177,10 @@ export class Game {
   private loadRetry: ReturnType<typeof setTimeout> | undefined;
   private loadAbort: AbortController | null = null;
   private areaName = '';
+  /** streets around a spot the phone's explore map was panned to, beyond the map loaded around you */
+  private far: { x: number; y: number; world: World | null; abort: AbortController } | null = null;
+  /** bumped whenever a map arrives, so the phone's touch map is described afresh */
+  private mapVersion = 0;
 
   private x = 0;
   private y = 0;
@@ -328,6 +332,8 @@ export class Game {
     if (!this.restartingForGps) this.stopLive();
     this.loadAbort?.abort();
     clearTimeout(this.loadRetry);
+    this.far?.abort.abort();
+    this.far = null;
     this.proj = new Projection(center);
     this.loadNotes();
     this.x = 0;
@@ -512,7 +518,10 @@ export class Game {
       }
 
       if (this.world) this.swapWorld(world);
-      else this.world = world;
+      else {
+        this.world = world;
+        this.mapVersion++;
+      }
       installed = true;
       if (this.dest && !this.grid && this.settings.turnByTurn && (!this.route || this.route.partial) && this.clock - this.lastRouteCalc > 10) void this.computeRoute(false);
       this.loadCenter = at;
@@ -595,6 +604,7 @@ export class Game {
       this.inJunction = seed ? new Set(next.junction(seed, this.filter, this.junctionRadius).nodes.map((m) => m.id)) : null;
     }
     this.world = next;
+    this.mapVersion++;
     this.markCrossings(); // streets newly loaded along the route may be crossed
     this.ring = null; // picked up again from the new map, if we are in one
     this.ahead = null;
@@ -612,6 +622,8 @@ export class Game {
   run(key: string, mods: { shift?: boolean; ctrl?: boolean } = {}) {
     const code = /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : /^\d$/.test(key) ? `Digit${key}` : key;
     this.command({ key, code, shift: !!mods.shift, ctrl: !!mods.ctrl, alt: false, repeat: false });
+    // a swipe or spoken "turn left" is a press and release in one: say the new heading as letting go of the key does
+    if (code === 'ArrowLeft' || code === 'ArrowRight') this.keyUp(code);
   }
 
   /** The key currently bound to an action, as spoken. */
@@ -3351,8 +3363,8 @@ export class Game {
   }
 
   /** The road or path at (x, y), by default where the traveller stands, if any. */
-  private gridRoad(x = this.x, y = this.y): Area | null {
-    const hit = this.world?.nearestRoad(x, y, 30);
+  private gridRoad(x = this.x, y = this.y, world = this.world): Area | null {
+    const hit = world?.nearestRoad(x, y, 30);
     if (!hit || hit.hit.dist > roadHalfWidth(hit.seg.way.type) + 1.5) return null;
     const w = hit.seg.way;
     return { key: `road:${w.name}`, kind: w.name, sound: MINOR.has(w.type) ? 'path' : 'road' };
@@ -3407,7 +3419,7 @@ export class Game {
   }
 
   /** Give a tile area its best name: OpenStreetMap's own, else a house number; and the phrase to say. */
-  private nameArea(area: Area, onRoad: boolean, x: number, y: number): { area: Area; text: string } {
+  private nameArea(area: Area, onRoad: boolean, x: number, y: number, world = this.world): { area: Area; text: string } {
     let text = '';
     if (!onRoad) {
       // the tiles' building and ground outlines carry no names: OpenStreetMap's own, when loaded
@@ -3415,7 +3427,7 @@ export class Game {
       // a named compound where the tiles have no ground at all is its "grounds", not "open ground"
       if (osm) area = { ...area, name: osm.name, kind: osm.kind ?? (area.sound === 'open' ? 'grounds' : area.kind), number: undefined };
       if (!area.name && area.number) {
-        const st = this.world?.nearestRoad(x, y, 30, (w) => w.named && !MINOR.has(w.type));
+        const st = world?.nearestRoad(x, y, 30, (w) => w.named && !MINOR.has(w.type));
         text = `${area.kind} number ${area.number}${st ? ` on ${st.seg.way.name}` : ''}`;
       }
     }
@@ -3426,7 +3438,7 @@ export class Game {
 
   /** Where the traveller is and faces, for the phone screen. */
   get pose() {
-    return { x: this.x, y: this.y, heading: this.heading, live: !!this.live, ready: !!this.world, loadFailed: this.loadFailed, units: this.settings.units };
+    return { x: this.x, y: this.y, heading: this.heading, live: !!this.live, ready: !!this.world, loadFailed: this.loadFailed, mapVersion: this.mapVersion, units: this.settings.units };
   }
 
   /** Back from the lock screen or another app, where iOS may have interrupted the sound. */
@@ -3434,11 +3446,13 @@ export class Game {
     if (this.running && !this.paused) this.audio.resume();
   }
 
-  /** What is at (x, y): road, named building or ground, as a short phrase with its sound. Null before the map loads. */
+  /** What is at (x, y): road, named building or ground, as a short phrase with its sound. Null before its map loads. */
   async describeAt(x: number, y: number): Promise<{ text: string; sound: AreaSound; named: boolean } | null> {
     if (!this.world) return null;
     this.loadNamed();
-    let area = this.gridRoad(x, y);
+    const roads = this.roadsAt(x, y);
+    if (!roads) return null; // without its streets, a street there would read as open ground
+    let area = this.gridRoad(x, y, roads);
     const onRoad = !!area;
     if (!area) {
       try {
@@ -3447,8 +3461,35 @@ export class Game {
         return null;
       }
     }
-    const named = this.nameArea(area, onRoad, x, y);
+    const named = this.nameArea(area, onRoad, x, y, roads);
     return { text: named.text, sound: named.area.sound, named: onRoad || !!named.area.name || !!named.area.number };
+  }
+
+  /**
+   * The streets covering (x, y): the map around you, or else one loaded around that spot, since the
+   * phone's explore map can be panned far beyond yours. Null while that one loads; mapVersion then
+   * changes when it arrives.
+   */
+  private roadsAt(x: number, y: number): World | null {
+    if (this.inLoadedArea(x, y)) return this.world;
+    const r = this.vehicle.loadRadius * 0.85;
+    const f = this.far;
+    if (f && Math.abs(x - f.x) < r && Math.abs(y - f.y) < r) return f.world;
+    f?.abort.abort();
+    const proj = this.proj;
+    const far = { x, y, world: null as World | null, abort: new AbortController() };
+    this.far = far;
+    fetchTileArea(proj.toLatLon(x, y), this.vehicle.loadRadius, far.abort.signal).then(
+      (t) => {
+        if (this.far !== far || this.proj !== proj) return;
+        far.world = new World(proj, t.roads);
+        this.mapVersion++;
+      },
+      () => {
+        if (this.far === far) this.far = null; // tried again on the next look there
+      },
+    );
+    return null;
   }
 
   /** The neighbourhood (x, y) is near, if any. */

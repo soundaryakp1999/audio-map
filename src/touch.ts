@@ -70,7 +70,11 @@ export const GESTURES: Record<Gesture, Action> = {
 
 /** Only touches on the game surface itself are taken; buttons and form controls keep their own behavior. */
 export function setupTouch(stage: HTMLElement, getGame: () => Driver | null) {
-  let start: { x: number; y: number; t: number } | null = null;
+  // each finger is measured from where it went down: from one finger to another, a two-finger tap
+  // with the fingers apart would read as a swipe
+  const starts = new Map<number, { x: number; y: number }>();
+  let moved = { dx: 0, dy: 0 };
+  let t0 = 0;
   let fingers = 0;
   const own = (e: TouchEvent) => e.target === stage || (e.target as Element).closest('#map, #hud') !== null;
 
@@ -79,26 +83,38 @@ export function setupTouch(stage: HTMLElement, getGame: () => Driver | null) {
     (e) => {
       if (!own(e)) return;
       e.preventDefault();
-      if (e.touches.length === 1) {
-        const t = e.touches[0];
-        start = { x: t.clientX, y: t.clientY, t: e.timeStamp };
-        fingers = 1;
-      } else fingers = Math.max(fingers, e.touches.length);
+      if (!starts.size) {
+        t0 = e.timeStamp;
+        fingers = 0;
+        moved = { dx: 0, dy: 0 };
+      }
+      for (const t of Array.from(e.changedTouches)) starts.set(t.identifier, { x: t.clientX, y: t.clientY });
+      fingers = Math.max(fingers, e.touches.length);
     },
     { passive: false },
   );
   stage.addEventListener(
     'touchend',
     (e) => {
-      if (!start || e.touches.length > 0) return;
+      let ours = false;
+      for (const t of Array.from(e.changedTouches)) {
+        const s = starts.get(t.identifier);
+        if (!s) continue;
+        ours = true;
+        starts.delete(t.identifier);
+        // the finger that moved furthest says what the gesture was
+        const dx = t.clientX - s.x;
+        const dy = t.clientY - s.y;
+        if (Math.hypot(dx, dy) > Math.hypot(moved.dx, moved.dy)) moved = { dx, dy };
+      }
+      if (!ours) return;
       e.preventDefault();
-      const t = e.changedTouches[0];
-      const g = classify(t.clientX - start.x, t.clientY - start.y, e.timeStamp - start.t, fingers);
-      start = null;
+      if (starts.size || e.touches.length > 0) return;
+      const g = classify(moved.dx, moved.dy, e.timeStamp - t0, fingers);
       const game = getGame();
       if (g && game) perform(game, GESTURES[g]);
     },
     { passive: false },
   );
-  stage.addEventListener('touchcancel', () => (start = null));
+  stage.addEventListener('touchcancel', () => starts.clear());
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { bearing, pointSeg } from './geo';
 import { addCrossings, maneuverText, planRoute, type Maneuver, type Route, type RouteOptions } from './router';
 import type { GNode, Segment, Way, World } from './world';
 
@@ -23,7 +24,10 @@ function build(): World {
   link(2, 4, elm);
   return {
     nodes,
-    nearestRoad: (x: number, y: number) => ({ seg: segs[0], hit: { dist: 0, t: 0, px: x, py: y }, dir: 0 }),
+    nearestRoad: (x: number, y: number) => {
+      const near = segs.map((seg) => ({ seg, hit: pointSeg(x, y, seg.ax, seg.ay, seg.bx, seg.by), dir: bearing(seg.ax, seg.ay, seg.bx, seg.by) }));
+      return near.sort((p, q) => p.hit.dist - q.hit.dist)[0];
+    },
     nodesNear: () => [...nodes.values()],
   } as unknown as World;
 }
@@ -43,6 +47,20 @@ describe('planRoute', () => {
     expect(turn.d).toBeCloseTo(100);
     expect(arrive.kind).toBe('arrive');
   });
+  it('ends partway along a block at the point nearest the destination, not at the far junction', () => {
+    const r = planRoute(build(), start, { x: 60, y: 104 }, opts)!; // a door on Elm Street, 60 m along
+    expect(r.length).toBeCloseTo(164);
+    expect(r.maneuvers.map((m) => m.kind)).toEqual(['turn', 'arrive']);
+    expect(r.maneuvers[0]).toMatchObject({ onto: 'Elm Street', d: 100 });
+    expect(r.points.at(-2)).toMatchObject({ x: 60, y: 100 });
+  });
+
+  it('goes straight along the street when the destination is on the stretch you are on', () => {
+    const r = planRoute(build(), start, { x: 0, y: 60 }, opts)!;
+    expect(r.length).toBeCloseTo(60);
+    expect(r.maneuvers.map((m) => m.kind)).toEqual(['arrive']);
+  });
+
   it('turns left towards the other spur', () => {
     const r = planRoute(build(), start, { x: -100, y: 100 }, opts)!;
     expect(r.maneuvers[0].kind).toBe('turn');
