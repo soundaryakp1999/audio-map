@@ -46,6 +46,7 @@ export const DEFAULT_KEYS = {
   tripSummary: [k('u')],
   whereAmI: [k('e')],
   lookAround: [k('e', true)],
+  lookAhead: [k('i', true)],
   sos: [k('k', true)],
   preview: [k('o')],
   facilities: [k('o', true)],

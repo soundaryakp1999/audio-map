@@ -1391,4 +1391,14 @@ describe('look around', () => {
     game.run('E', { shift: true });
     expect(said.at(-1)).toBe('Look around off.');
   });
+
+  it('Shift I says what lies the way you are heading, without the mode on', () => {
+    const { game, said, g } = setup();
+    g.y = 60;
+    game.run('I', { shift: true });
+    expect(said.at(-1)).toMatch(/^North: Blue Cafe/);
+    g.heading = 180;
+    game.run('I', { shift: true });
+    expect(said.at(-1)).toBe('South: nothing mapped within 150 metres.');
+  });
 });

@@ -7,6 +7,10 @@ describe('matchPhrase', () => {
     expect(matchPhrase('please go faster')).toEqual({ drive: 'go' });
     expect(matchPhrase('Stop!')).toEqual({ drive: 'brake' });
   });
+  it('matches look ahead as an action', () => {
+    expect(matchPhrase("what's ahead")).toEqual({ action: 'lookAhead' });
+    expect(matchPhrase('look ahead please')).toEqual({ action: 'lookAhead' });
+  });
   it('prefers the longest phrase', () => {
     expect(matchPhrase('next road left')).toEqual({ key: 'ArrowLeft', ctrl: true });
   });
