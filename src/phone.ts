@@ -15,7 +15,7 @@ const MID = (N - 1) / 2;
 export const SQUARES = [10, 20, 50];
 
 export interface PhoneGame {
-  readonly pose: { x: number; y: number; heading: number; live: boolean; ready: boolean; units: Units };
+  readonly pose: { x: number; y: number; heading: number; live: boolean; ready: boolean; loadFailed: boolean; units: Units };
   readonly hasDestination: boolean;
   describeAt(x: number, y: number): Promise<{ text: string; sound: AreaSound; named: boolean } | null>;
   hoodAt(x: number, y: number): Promise<string | null>;
@@ -135,7 +135,8 @@ export class Phone {
   private frame: { cx: number; cy: number; up: number; size: number; units: Units; mode: string } | null = null;
   private cells: (Cell | null)[] = [];
   private buttons: HTMLButtonElement[] = [];
-  private selected = -1;
+  /** the square last double tapped; kept when the map moves on, so Set as destination still means it */
+  private chosen: Cell | null = null;
   private seq = 0;
   private timer: ReturnType<typeof setInterval> | undefined;
   private touching = false;
@@ -298,6 +299,8 @@ export class Phone {
     this.root.classList.remove('welcome');
     this.el('ph-voice').textContent = this.hooks.voiceLabel();
     this.el('ph-shake').textContent = this.hooks.shakeLabel();
+    this.chosen = null; // a fresh start: squares were chosen on the last map
+    this.select(-1);
     this.setMode(mode, false);
     clearInterval(this.timer);
     this.timer = setInterval(() => this.tick(), 250);
@@ -337,7 +340,11 @@ export class Phone {
     const g = this.getGame();
     const status = this.el('ph-status');
     if (!g || !g.pose.ready) {
-      status.textContent = 'Loading the map…';
+      // the directions line too: with the map hidden it is the only line about the map that shows
+      const wait = g?.pose.loadFailed ? 'Could not load the map. Trying again shortly.' : 'Loading the map…';
+      status.textContent = wait;
+      const d = this.el('ph-dirs');
+      if (d.textContent !== wait) d.textContent = wait;
       return;
     }
     const p = g.pose;
@@ -431,17 +438,18 @@ export class Phone {
     g.announce(`${c.label}.${hood ? ` Near ${hood}.` : ''} Set as destination is below the map.`);
   }
 
+  /** Mark square i (-1: none) as chosen. Redrawing the map unmarks the squares but keeps the choice. */
   private select(i: number) {
-    this.selected = i;
     this.buttons.forEach((b, k) => b.setAttribute('aria-pressed', String(k === i)));
+    if (this.cells[i]) this.chosen = this.cells[i];
     const dest = this.el<HTMLButtonElement>('ph-dest');
-    const c = this.cells[i];
+    const c = this.chosen;
     dest.disabled = !c;
     dest.textContent = c ? `Set as destination: ${c.text.split(',')[0]}` : 'Set as destination';
   }
 
   private setDestination() {
-    const c = this.cells[this.selected];
+    const c = this.chosen;
     this.game((g) => {
       if (!c) return g.announce('Double tap a square on the map first.');
       g.setTarget({ name: c.text.split(',')[0], x: c.x, y: c.y });
