@@ -45,6 +45,7 @@ export const DEFAULT_KEYS = {
   saveOffline: [k('s', true)],
   tripSummary: [k('u')],
   whereAmI: [k('e')],
+  lookAround: [k('e', true)],
   sos: [k('k', true)],
   preview: [k('o')],
   facilities: [k('o', true)],

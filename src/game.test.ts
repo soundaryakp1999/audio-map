@@ -1356,3 +1356,39 @@ describe('corridorSpots', () => {
     expect(corridorSpots([], 300, 12)).toEqual([]);
   });
 });
+
+describe('look around', () => {
+  it('says the places and the intersection in the direction pointed', () => {
+    const { g } = setup();
+    g.y = 60;
+    expect(g.lookText(0)).toBe('North: Blue Cafe, cafe, 45 metres. Oak Street and Elm Street, 140 metres.');
+    expect(g.lookText(180)).toBe('South: nothing mapped within 150 metres.');
+  });
+
+  it('speaks once the phone is held still on a new direction, and not again for the same one', () => {
+    const { game, said, g } = setup();
+    game.run('E', { shift: true });
+    expect(said.at(-1)).toMatch(/^Look around on/);
+    g.heading = 0;
+    g.clock = 10;
+    g.checkLookAround(); // starts holding
+    g.clock = 10.5;
+    g.checkLookAround();
+    expect(said).toHaveLength(1);
+    g.clock = 11.2;
+    g.checkLookAround();
+    expect(said).toHaveLength(2);
+    expect(said.at(-1)).toMatch(/^North:/);
+    g.clock = 13;
+    g.checkLookAround();
+    expect(said).toHaveLength(2);
+    g.heading = 90;
+    g.clock = 14;
+    g.checkLookAround();
+    g.clock = 15.2;
+    g.checkLookAround();
+    expect(said.at(-1)).toMatch(/^East:/);
+    game.run('E', { shift: true });
+    expect(said.at(-1)).toBe('Look around off.');
+  });
+});
