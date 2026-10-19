@@ -23,6 +23,7 @@ import { setupVoice } from './voice';
 import { postOsmNote } from './osmnotes';
 import { Phone, isPhone } from './phone';
 import { requestCompass } from './gps';
+import { requestMotion, startShake } from './shake';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -287,6 +288,18 @@ document.addEventListener('visibilitychange', () => {
   if (wakeLock && document.visibilityState === 'visible' && phone.active) void keepAwake();
 });
 
+let stopShake: (() => void) | null = null;
+/** Listen for shakes only while the phone screen is up and the player has asked for it. */
+function applyShake() {
+  stopShake?.();
+  stopShake = null;
+  if (!settings.shake || !phone.active) return;
+  stopShake = startShake(() => {
+    const b = game?.keyFor('whereAmI');
+    if (b) game?.run(b.key, b);
+  });
+}
+const shakeLabel = () => `Shake for address: ${settings.shake ? 'on' : 'off'}`;
 const voiceLabel = () => (settings.speechMode === 'voice' ? 'Speech: built-in voice' : 'Speech: screen reader');
 const phone = new Phone($('phone'), () => game, {
   openSearch: () => openNav('navigate'),
@@ -298,6 +311,14 @@ const phone = new Phone($('phone'), () => game, {
   },
   voiceLabel,
   toggleListen: () => toggleVoice?.() ?? false,
+  shakeLabel,
+  toggleShake: () => {
+    update({ shake: !settings.shake });
+    if (settings.shake) void requestMotion(); // from this tap: iOS asks only inside a gesture
+    applyShake();
+    speech.say(settings.shake ? 'Shake the phone to hear where you are.' : 'Shake is off.', 'high');
+    return shakeLabel();
+  },
   guide: () => {
     if (!settings.turnByTurn || !settings.beaconSound) update({ turnByTurn: true, beaconSound: true });
     void keepAwake();
@@ -320,6 +341,7 @@ function startPhone() {
   if (menu.open) menu.close();
   $('app').inert = true; // the keyboard explorer underneath stays out of the screen reader's way
   phone.show('travel');
+  applyShake();
   const explore = (why: string) => {
     speech.say(`${why} Explore mode works anywhere; travel mode needs your location.`, 'high');
     if (!g.isStarted) void g.start(selected, selected.name);
@@ -346,6 +368,7 @@ function leavePhone() {
   void wakeLock?.release().catch(() => {});
   wakeLock = null;
   stopBackground();
+  applyShake();
 }
 
 $('phone-btn').addEventListener('click', startPhone);

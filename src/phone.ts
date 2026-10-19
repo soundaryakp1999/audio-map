@@ -39,6 +39,9 @@ export interface PhoneHooks {
   voiceLabel(): string;
   /** turn spoken commands on or off; false when the browser cannot do them */
   toggleListen(): boolean;
+  shakeLabel(): string;
+  /** turn shake-for-address on or off; returns the button's new label */
+  toggleShake(): string;
   /** turn on turn by turn and the beacon, and keep the screen awake */
   guide(): void;
 }
@@ -177,6 +180,7 @@ export class Phone {
     this.el('ph-offline').addEventListener('click', () => this.action('saveOffline'));
     this.el('ph-look').addEventListener('click', () => this.action('lookAround'));
     this.el('ph-ahead').addEventListener('click', () => this.action('lookAhead'));
+    this.el('ph-shake').addEventListener('click', () => (this.el('ph-shake').textContent = this.hooks.toggleShake()));
     this.el('ph-nearby').addEventListener('click', () => this.openNearby());
     const kinds = this.el('ph-near-kinds');
     for (const [group, label] of NEAR_KINDS) {
@@ -245,6 +249,7 @@ export class Phone {
     this.showMap(this.mapShown);
     this.root.classList.remove('welcome');
     this.el('ph-voice').textContent = this.hooks.voiceLabel();
+    this.el('ph-shake').textContent = this.hooks.shakeLabel();
     this.setMode(mode, false);
     clearInterval(this.timer);
     this.timer = setInterval(() => this.tick(), 250);
