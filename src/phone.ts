@@ -44,6 +44,8 @@ export interface PhoneHooks {
   shakeLabel(): string;
   /** turn shake-for-address on or off; returns the button's new label */
   toggleShake(): string;
+  /** start or stop watching the camera for a crossing signal; returns whether it is on */
+  toggleSignal(): Promise<boolean>;
   /** turn on turn by turn and the beacon, and keep the screen awake */
   guide(): void;
 }
@@ -188,6 +190,10 @@ export class Phone {
     this.el('ph-look').addEventListener('click', () => this.action('lookAround'));
     this.el('ph-ahead').addEventListener('click', () => this.action('lookAhead'));
     this.el('ph-shake').addEventListener('click', () => (this.el('ph-shake').textContent = this.hooks.toggleShake()));
+    this.el('ph-signal').addEventListener('click', async () => {
+      const b = this.el('ph-signal');
+      b.setAttribute('aria-pressed', String(await this.hooks.toggleSignal()));
+    });
     this.el('ph-nearby').addEventListener('click', () => this.openNearby());
     const kinds = this.el('ph-near-kinds');
     for (const [group, label] of NEAR_KINDS) {

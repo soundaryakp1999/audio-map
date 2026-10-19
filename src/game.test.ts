@@ -1383,6 +1383,17 @@ describe('crossing advice', () => {
   });
 });
 
+describe('atSignalCrossing', () => {
+  it('is true only within 15 m of a mapped signal crossing', () => {
+    const { g } = setup();
+    g.world.addPlaces({ places: [], signals: new Set<number>(), crossings: [{ ...ll(0, 52), text: 'Crossing with signals', extras: [] }] });
+    expect(g.atSignalCrossing()).toBe(true);
+    g.world.addPlaces({ places: [], signals: new Set<number>(), crossings: [{ ...ll(0, 500), text: 'Pedestrian crossing', extras: [] }] });
+    g.y += 300;
+    expect(g.atSignalCrossing()).toBe(false);
+  });
+});
+
 describe('corridorSpots', () => {
   const line = Array.from({ length: 11 }, (_, i) => ({ x: 0, y: i * 100, d: i * 100 }));
 

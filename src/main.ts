@@ -26,6 +26,9 @@ import { postOsmNote } from './osmnotes';
 import { Phone, isPhone } from './phone';
 import { requestCompass } from './gps';
 import { requestMotion, startShake } from './shake';
+import { SignalWatcher } from './signal';
+import { KeyRejected, askGemini, findImageModels, listModels, type ModelChoice, type Swatch } from './cloudSignal';
+import { clearKey, forgetStoredKey, loadKey, saveKey } from './geminiKey';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -80,7 +83,7 @@ function bindSettings() {
       });
     }
   }
-  for (const id of ['announceStreets', 'announcePlaces', 'announceHazards', 'haptics', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap', 'accessibleRoute'] as const) {
+  for (const id of ['announceStreets', 'announcePlaces', 'announceHazards', 'haptics', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap', 'accessibleRoute', 'cloudWalk', 'forgetKey'] as const) {
     const el = $<HTMLInputElement>(id);
     el.checked = settings[id];
     el.addEventListener('change', () => update({ [id]: el.checked }));
@@ -105,6 +108,100 @@ function bindSettings() {
   extras.checked = settings.customSound.extras;
   const custom = () => update({ customSound: { places: places.value as Settings['customSound']['places'], sideStreets: side.checked, extras: extras.checked } });
   for (const el of [places, side, extras]) el.addEventListener('change', custom);
+  const keyField = $<HTMLInputElement>('gemini-key');
+  const keyStatus = $('gemini-status');
+  const box = $('gemini-box');
+  const showKey = (msg = '') => {
+    const held = loadKey() ? (settings.forgetKey ? 'A key is held until you close this page.' : 'A key is saved on this device.') : 'No key is saved.';
+    keyStatus.textContent = `${msg} ${held}`.trim();
+  };
+  showKey();
+  const modelBox = $<HTMLSelectElement>('gemini-model');
+  const showModels = (choices: ModelChoice[]) => {
+    const all = settings.geminiModel && !choices.some((c) => c.name === settings.geminiModel) ? [{ name: settings.geminiModel, label: settings.geminiModel.slice(7) }, ...choices] : choices;
+    modelBox.replaceChildren(new Option('Choose a model', '', false, !settings.geminiModel));
+    for (const c of all) modelBox.append(new Option(c.label, c.name, false, c.name === settings.geminiModel));
+  };
+  showModels([]);
+  modelBox.addEventListener('change', () => update({ geminiModel: modelBox.value }));
+
+  const swatch = (colour: string, fill: string): Swatch => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const g = c.getContext('2d')!;
+    g.fillStyle = fill;
+    g.fillRect(0, 0, 64, 64);
+    return { png: c.toDataURL('image/png').split(',')[1], colour };
+  };
+  // one status line is announced by the screen reader (role=status), so progress is reported sparingly, not per model
+  let busy = false;
+  const findModels = async () => {
+    const key = loadKey();
+    if (!key) return showKey('Save a key first.');
+    if (busy) return;
+    busy = true;
+    box.setAttribute('aria-busy', 'true');
+    keyStatus.textContent = 'Asking Google for the models this key can use.';
+    try {
+      const choices = await listModels(key);
+      keyStatus.textContent = `Testing ${choices.length} models to see which can read pictures. This can take a minute.`;
+      const { ok, untested } = await findImageModels(key, choices, [swatch('red', '#e02020'), swatch('green', '#20c040')], (d, n) => {
+        if (d % 10 === 0 && d < n) keyStatus.textContent = `Tested ${d} of ${n} models.`;
+      });
+      showModels(ok);
+      const skipped = untested ? ` ${untested} could not be tested, for example because of a rate limit; try again later.` : '';
+      showKey(ok.length ? `${ok.length} models can read pictures. Choose one in the model list.${skipped}` : `No model could be shown to read pictures.${skipped}`);
+      if (ok.length) modelBox.focus();
+    } catch (e) {
+      if (e instanceof KeyRejected) clearKey();
+      showKey(e instanceof KeyRejected ? 'Google refused the key, so it was removed.' : 'Could not load the models. Check the connection and try again.');
+    } finally {
+      busy = false;
+      box.removeAttribute('aria-busy');
+    }
+  };
+  const saveTyped = () => {
+    const ok = saveKey(keyField.value, !settings.forgetKey);
+    keyField.value = '';
+    return ok;
+  };
+  const pasteKey = async (quiet = false) => {
+    let text = '';
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      if (!quiet) showKey('The clipboard could not be read. Type or paste the key into the key box, then choose Save the key in the box.');
+      return false;
+    }
+    const ok = saveKey(text, !settings.forgetKey);
+    if (!ok) {
+      if (!quiet) showKey('The clipboard does not hold an API key. Copy the key, then try again.');
+      return false;
+    }
+    const cleared = await navigator.clipboard.writeText('').then(() => true, () => false);
+    showKey(cleared ? 'Key saved from the clipboard, and the clipboard was emptied.' : 'Key saved from the clipboard.');
+    return true;
+  };
+  $('gemini-paste').addEventListener('click', () => void pasteKey());
+  $('gemini-save').addEventListener('click', () => showKey(saveTyped() ? 'Key saved.' : 'That does not look like an API key; paste only the key.'));
+  $('gemini-models').addEventListener('click', () => void findModels());
+  $('gemini-quick').addEventListener('click', async () => {
+    if (busy) return;
+    const fromBox = keyField.value.trim() !== '';
+    if (fromBox ? !saveTyped() : !(await pasteKey(true)) && !loadKey()) {
+      return showKey(fromBox ? 'That does not look like an API key; paste only the key.' : 'No key found in the key box or the clipboard. Copy a key from Google AI Studio, then try again.');
+    }
+    await findModels();
+  });
+  $('forgetKey').addEventListener('change', () => {
+    if (settings.forgetKey) forgetStoredKey();
+    showKey();
+  });
+  $('gemini-clear').addEventListener('click', () => {
+    clearKey();
+    keyField.value = '';
+    showKey('Key removed.');
+  });
   const units = $<HTMLSelectElement>('units');
   units.value = settings.units;
   units.addEventListener('change', () => update({ units: units.value as Settings['units'], unitsChosen: true }));
@@ -301,6 +398,12 @@ function applyShake() {
     if (b) game?.run(b.key, b);
   });
 }
+let signal: SignalWatcher | null = null;
+const SIGNAL_SPEECH = { walk: 'Walk signal. Check for traffic.', dontWalk: "Don't walk signal.", unsure: 'Not sure. Listen to traffic.', none: 'Signal lost.' };
+function stopSignal() {
+  signal?.stop();
+  signal = null;
+}
 const shakeLabel = () => `Shake for address: ${settings.shake ? 'on' : 'off'}`;
 const voiceLabel = () => (settings.speechMode === 'voice' ? 'Speech: built-in voice' : 'Speech: screen reader');
 const phone = new Phone($('phone'), () => game, {
@@ -329,6 +432,50 @@ const phone = new Phone($('phone'), () => game, {
     applyShake();
     speech.say(settings.shake ? 'Shake the phone to hear where you are.' : 'Shake is off.', 'high');
     return shakeLabel();
+  },
+  toggleSignal: async () => {
+    if (signal) {
+      stopSignal();
+      speech.say('Crossing signal watch is off.', 'high');
+      return false;
+    }
+    const model = settings.geminiModel;
+    const key = settings.cloudWalk && model ? loadKey() : null;
+    let refused = false;
+    const w = new SignalWatcher({
+      video: $('ph-signal-video') as HTMLVideoElement,
+      gate: () => game?.atSignalCrossing() ?? false,
+      cloud: key
+        ? async (jpeg) => {
+            try {
+              return await askGemini(key, model, jpeg);
+            } catch (e) {
+              if (e instanceof KeyRejected && !refused) {
+                refused = true;
+                clearKey();
+                speech.say('Google refused the Gemini key, so it was removed and Walk signals are off.', 'high');
+              }
+              return 'none';
+            }
+          }
+        : undefined,
+      onChange: (s) => speech.say(SIGNAL_SPEECH[s], 'high'),
+    });
+    try {
+      await w.start();
+    } catch {
+      w.stop();
+      speech.say('The camera could not be opened, so the signal watch is off. It can be allowed in the browser settings for this site.', 'high');
+      return false;
+    }
+    signal = w;
+    const walk = key
+      ? 'Walk signals come from Gemini, which can be wrong; photos are sent to Google. Fast beeps mean walk.'
+      : settings.cloudWalk
+        ? 'Gemini is on in settings but no key is saved or no model is chosen, so there are no Walk signals.'
+        : 'There are no Walk signals.';
+    speech.say(`Point the back camera at the crossing signal. It listens only within about 15 metres of a mapped signal crossing. This is an aid only: slow beeps mean a red or orange do not walk signal is seen. ${walk} Silence does not mean walk. Always check the street yourself.`, 'high');
+    return true;
   },
   guide: () => {
     if (!settings.turnByTurn || !settings.beaconSound) update({ turnByTurn: true, beaconSound: true });
@@ -379,6 +526,8 @@ function leavePhone() {
   void wakeLock?.release().catch(() => {});
   wakeLock = null;
   stopBackground();
+  stopSignal();
+  $('ph-signal').setAttribute('aria-pressed', 'false');
   applyShake();
 }
 

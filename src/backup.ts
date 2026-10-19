@@ -1,5 +1,6 @@
 import { REBINDABLE, conflict, isReserved, type Binding, type KeyOverrides } from './keymap';
 import type { Settings } from './settings';
+import { isModel } from './cloudSignal';
 
 export interface BackupPlace {
   name: string;
@@ -34,7 +35,7 @@ const ENUMS: Record<string, readonly string[]> = {
   soundProfile: ['full', 'simple', 'minimal', 'custom'],
   soundTheme: ['classic', 'soft', 'distinct'],
 };
-const BOOLS = ['unitsChosen', 'announcePlaces', 'announceHazards', 'haptics', 'shake', 'announceStreets', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap', 'accessibleRoute'];
+const BOOLS = ['unitsChosen', 'announcePlaces', 'announceHazards', 'haptics', 'shake', 'announceStreets', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap', 'accessibleRoute', 'cloudWalk', 'forgetKey'];
 const GROUPS = ['food', 'shop', 'transport', 'culture', 'nature', 'health', 'service', 'other'];
 const VEHICLES = ENUMS.vehicle;
 const PROFILES = ENUMS.soundProfile;
@@ -65,6 +66,7 @@ export function validate(raw: unknown): Backup {
   const s = isObj(raw.settings) ? raw.settings : {};
   for (const [k, allowed] of Object.entries(ENUMS)) if (typeof s[k] === 'string' && allowed.includes(s[k])) settings[k] = s[k];
   for (const k of BOOLS) if (typeof s[k] === 'boolean') settings[k] = s[k];
+  if (isModel(s.geminiModel)) settings.geminiModel = s.geminiModel;
   if (Array.isArray(s.mutedGroups)) settings.mutedGroups = [...new Set(s.mutedGroups.filter((g): g is string => typeof g === 'string' && GROUPS.includes(g)))];
   const cs = s.customSound;
   if (isObj(cs) && typeof cs.places === 'string' && CUSTOM_PLACES.includes(cs.places) && typeof cs.sideStreets === 'boolean' && typeof cs.extras === 'boolean') {

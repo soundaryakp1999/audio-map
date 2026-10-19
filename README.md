@@ -36,6 +36,8 @@ Headphones recommended (place sounds are positioned in 3D around you).
 
 On a phone, **Phone mode** (top of the start menu) gives a touch map that works with VoiceOver and TalkBack: a 7 × 7 grid of squares read as you touch them. **Travel** (the default) follows your real location with up the street you face, directions at the top and the beacon; **Explore** is north up and pans by buttons. Units follow the country (imperial in the US) until you choose them in settings. Location needs HTTPS.
 
+**Crossing signal watch** (phone mode) listens with the back camera within about 15 m of a mapped signal crossing. On its own it only recognises a lit red or orange *Don't Walk*, and says "not sure" when red and green both show; it never reports *Walk*. *Walk* needs the optional Gemini setting: the player pastes their own Gemini API key, which is kept in its own `localStorage` entry (never in settings or exports), sent only in a request header to `generativelanguage.googleapis.com`, and used only while the setting is on. Camera photos go to Google about once a second while it runs; nothing is stored by the app.
+
 Press **F3** for grid mode: north is up, the arrow keys step across the map, and each kind of ground (road, building, park, water, land use) has its own sound. Areas come from the same vector tiles (`src/areas.ts`).
 
 Press **F1** in the explorer for spoken help. The full key list is in the menu (**Escape**).

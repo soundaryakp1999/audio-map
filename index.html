@@ -79,11 +79,13 @@
         <button type="button" id="ph-voice"></button>
         <button type="button" id="ph-listen" aria-pressed="false">Voice commands</button>
         <button type="button" id="ph-shake"></button>
+        <button type="button" id="ph-signal" aria-pressed="false">Crossing signal watch</button>
         <button type="button" id="ph-sos">Emergency</button>
         <button type="button" id="ph-offline">Save map offline</button>
         <button type="button" id="ph-menu">Menu</button>
       </div>
       <button type="button" id="ph-mode" class="ph-mode"></button>
+      <video id="ph-signal-video" class="sr-only" aria-hidden="true" muted playsinline></video>
     </section>
 
     <dialog id="ph-near" aria-labelledby="ph-near-title">
@@ -214,6 +216,43 @@
           <label><input type="checkbox" data-group="health" /> Health</label>
           <label><input type="checkbox" data-group="service" /> Services</label>
           <label><input type="checkbox" data-group="other" /> Other</label>
+        </fieldset>
+
+        <fieldset id="gemini-box">
+          <legend>Walk signal (Gemini)</legend>
+          <p id="gemini-privacy" class="hint">
+            Optional. On a phone, the crossing signal watch can ask Google's Gemini to recognise a Walk signal, using your own Gemini API key.
+            While it is on, and only within about 15 metres of a mapped signal crossing, the middle of a photo from the back camera is sent to Google about once
+            a second. Photos are not stored by this app. The free Gemini tier may let Google use what you send to improve its products, so a paid key is
+            more private. Limit the key to the Gemini API and give it a low quota. If you lose the phone, revoke the key in Google AI Studio.
+            The key is sent only to Google and is never included in Export my data. By default it is kept unencrypted in this browser's storage,
+            where any script running on this page could read it; the page blocks scripts from elsewhere, but treat the key as something you can replace.
+            Setup also sends each model a couple of tiny test pictures (plain colour squares, never camera photos) to check that it can read pictures:
+            about two calls per model, which count against your quota. Gemini can be wrong: always check the street yourself.
+          </p>
+          <p class="hint" id="gemini-steps-intro">Getting a key takes four steps:</p>
+          <ol class="hint" aria-labelledby="gemini-steps-intro">
+            <li><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Open the API keys page of Google AI Studio (opens in a new tab)</a> and sign in.</li>
+            <li>Choose Create API key, then Copy.</li>
+            <li>Come back here and choose Quick setup. It reads the key from the clipboard, finds the models that can read pictures and lists them.</li>
+            <li>Choose a model, then tick Use Gemini to recognise Walk signals.</li>
+          </ol>
+          <div class="actions">
+            <button type="button" id="gemini-quick" class="primary">Quick setup: key from the clipboard, then find models</button>
+          </div>
+          <p id="gemini-status" class="hint" role="status"></p>
+          <label for="gemini-model">Gemini model</label>
+          <select id="gemini-model"></select>
+          <label><input type="checkbox" id="cloudWalk" aria-describedby="gemini-privacy" /> Use Gemini to recognise Walk signals (sends camera photos to Google)</label>
+          <label><input type="checkbox" id="forgetKey" /> Do not keep the key on this device (paste it again each time you open the app)</label>
+          <label for="gemini-key">Gemini API key, if you would rather type or paste it here</label>
+          <input type="password" id="gemini-key" autocomplete="off" autocapitalize="off" spellcheck="false" />
+          <div class="actions">
+            <button type="button" id="gemini-paste">Paste key from the clipboard</button>
+            <button type="button" id="gemini-save">Save the key in the box</button>
+            <button type="button" id="gemini-models">Find models that can read pictures</button>
+            <button type="button" id="gemini-clear">Remove key</button>
+          </div>
         </fieldset>
 
         <div class="actions">

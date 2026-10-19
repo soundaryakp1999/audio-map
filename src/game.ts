@@ -1588,6 +1588,11 @@ export class Game {
     return `${cap(compass8(heading))}: ${items.length ? items.join('. ') : `nothing mapped within ${fmtDistance(reach, u)}`}.`;
   }
 
+  /** Whether a walker is within 15 m of a mapped crossing with signals; the signal watcher looks only then. */
+  atSignalCrossing(): boolean {
+    return this.vehicle.id === 'walker' && !!this.world?.hazardsNear(this.x, this.y, 15).some((n) => n.hazard.text === 'Crossing with signals');
+  }
+
   /** Standing at a crossing: what to wait for before stepping out, said once. */
   private checkAtCrossing() {
     if (!this.settings.announceHazards || this.vehicle.id !== 'walker' || this.speed > 0.5) return;
