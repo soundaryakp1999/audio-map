@@ -1,8 +1,11 @@
-// Shake the phone to hear where you are. Three hard jolts within a second, so a bump in a bag does not trigger it.
+// Shake the phone to hear where you are. Four hard jolts within 0.8 s: a shake jolts twice per
+// back-and-forth, several times a second, while footsteps (one jolt each, at most about three a
+// second even running) and a bump in a pocket or bag never come that fast.
 
-const HARD = 22; // m/s², gravity alone reads about 9.8
+const HARD = 25; // m/s², gravity alone reads about 9.8
 const GAP = 120; // ms between jolts, so one jolt is not counted twice
-const WINDOW = 1000;
+const WINDOW = 800;
+const JOLTS = 4;
 const COOLDOWN = 3000;
 
 export class ShakeDetector {
@@ -15,7 +18,7 @@ export class ShakeDetector {
     const last = this.jolts[this.jolts.length - 1];
     if (last !== undefined && t - last < GAP) return false;
     this.jolts = [...this.jolts.filter((j) => t - j <= WINDOW), t];
-    if (this.jolts.length < 3) return false;
+    if (this.jolts.length < JOLTS) return false;
     this.jolts = [];
     this.lastFire = t;
     return true;

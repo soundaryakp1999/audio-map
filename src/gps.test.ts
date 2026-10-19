@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compassHeading, easeAngle, fuse, motionBase, motionBetween, pickHeading, snapRadius } from './gps';
+import { compassHeading, easeAngle, heldToPoint, fuse, motionBase, motionBetween, pickHeading, snapRadius } from './gps';
 
 describe('compassHeading', () => {
   it('uses the iOS compass heading directly', () => {
@@ -12,6 +12,17 @@ describe('compassHeading', () => {
   it('ignores relative orientation, which is not north-referenced', () => {
     expect(compassHeading({ absolute: false, alpha: 90 })).toBeNull();
     expect(compassHeading({ absolute: true, alpha: null })).toBeNull();
+  });
+});
+
+describe('heldToPoint', () => {
+  it('is true held flat or tilted toward you, false upright or on its side as in a pocket', () => {
+    expect(heldToPoint({ beta: 5, gamma: -3 })).toBe(true);
+    expect(heldToPoint({ beta: 50, gamma: 0 })).toBe(true);
+    expect(heldToPoint({ beta: 88, gamma: 2 })).toBe(false);
+    expect(heldToPoint({ beta: -85, gamma: 0 })).toBe(false);
+    expect(heldToPoint({ beta: 10, gamma: 80 })).toBe(false);
+    expect(heldToPoint({})).toBe(true);
   });
 });
 

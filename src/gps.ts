@@ -31,12 +31,27 @@ export const DEFAULT_ACCURACY = 15;
 export type GpsProblem = 'denied' | 'nosignal' | 'unsupported';
 
 /** Below this speed the GPS course is noise, so it is not used for heading. */
-const MIN_COURSE_SPEED = 0.8;
+export const MIN_COURSE_SPEED = 0.8;
+
+/** Tilted further than this (degrees, either way), the phone is not held to point: in a pocket, say. */
+const MAX_TILT = 65;
 
 export interface OrientationLike {
   webkitCompassHeading?: number;
   alpha?: number | null;
   absolute?: boolean;
+  /** front-to-back tilt: 0 flat, 90 upright */
+  beta?: number | null;
+  /** side-to-side tilt */
+  gamma?: number | null;
+}
+
+/**
+ * Is the phone held near enough flat for its compass to say where it points? Upright or on its
+ * side, as in a pocket, it points nowhere useful.
+ */
+export function heldToPoint(e: OrientationLike): boolean {
+  return Math.abs(e.beta ?? 0) <= MAX_TILT && Math.abs(e.gamma ?? 0) <= MAX_TILT;
 }
 
 /** Compass heading (0 = north, clockwise) from an orientation event, or null if it is not relative to north. */
@@ -112,6 +127,7 @@ export function easeAngle(from: number, to: number, k: number): number {
 }
 
 export class LiveGps {
+  /** where the phone points, or null when it is not held to point (see heldToPoint) */
   compass: number | null = null;
   private watch: number | null = null;
   private lost = false;
@@ -126,8 +142,9 @@ export class LiveGps {
   ) {}
 
   private onOrientation = (e: Event) => {
-    const h = compassHeading(e as unknown as OrientationLike);
-    if (h !== null) this.compass = h;
+    const o = e as unknown as OrientationLike;
+    const h = compassHeading(o);
+    if (h !== null) this.compass = heldToPoint(o) ? h : null;
   };
 
   /** Call from a key press or click: iOS only asks for compass permission inside a user gesture. */
