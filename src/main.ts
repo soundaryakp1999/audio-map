@@ -340,6 +340,21 @@ function leavePhone() {
 
 $('phone-btn').addEventListener('click', startPhone);
 $('ph-begin').addEventListener('click', startPhone);
+// Chrome offers installing only after its own checks pass; the button appears when it does
+type InstallEvent = Event & { prompt(): Promise<unknown> };
+let installEvent: InstallEvent | null = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installEvent = e as InstallEvent;
+  $('ph-install').hidden = false;
+});
+window.addEventListener('appinstalled', () => ($('ph-install').hidden = true));
+$('ph-install').addEventListener('click', async () => {
+  await installEvent?.prompt();
+  installEvent = null;
+  $('ph-install').hidden = true;
+});
+
 $('ph-fullmenu').addEventListener('click', () => {
   leavePhone();
   openMenu('main');

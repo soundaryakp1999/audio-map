@@ -167,6 +167,7 @@ export class Phone {
     this.el('ph-where').addEventListener('click', () => this.hooks.openSearch());
     this.el('ph-start').addEventListener('click', () => this.start());
     this.el('ph-here').addEventListener('click', () => this.action('whereAmI'));
+    this.el('ph-offline').addEventListener('click', () => this.action('saveOffline'));
     this.el('ph-nearby').addEventListener('click', () => this.openNearby());
     const kinds = this.el('ph-near-kinds');
     for (const [group, label] of NEAR_KINDS) {

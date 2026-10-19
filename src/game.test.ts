@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Game, minutesText } from './game';
+import { Game, corridorSpots, minutesText } from './game';
 import { loadNotes, saveNotes } from './notes';
 import { Projection } from './geo';
 import { loadSettings } from './settings';
@@ -1065,6 +1065,19 @@ describe('phone screen', () => {
     expect(said.at(-1)).toBe("Bench, 40 metres at 12 o'clock. Toilets, 200 metres at 12 o'clock.");
   });
 
+  it('Shift S also fetches along the planned route', async () => {
+    vi.mocked(fetchTileArea).mockResolvedValue({ roads: rawRoads(), places: { places: [], signals: new Set<number>() } });
+    const { game, said, g } = setup();
+    g.route = { points: [{ x: 0, y: 50, d: 0 }, { x: 0, y: 450, d: 400 }, { x: 0, y: 850, d: 800 }], maneuvers: [], length: 800, partial: false };
+    const radius = g.vehicle.loadRadius;
+    game.run('S', { shift: true });
+    await flush();
+    const fetched = vi.mocked(fetchRoads).mock.calls.length;
+    expect(fetched).toBe(1 + corridorSpots(g.route.points, radius * 1.5, 12).length);
+    expect(fetched).toBeGreaterThan(1);
+    expect(said.at(-1)).toBe('Saved the map around here and along the route for offline use.');
+  });
+
   it('picks units by country until the player chooses: imperial in the US, metric in India', async () => {
     const units: string[] = [];
     vi.mocked(fetchCountry).mockResolvedValueOnce('us').mockResolvedValueOnce('in');
@@ -1191,5 +1204,22 @@ describe('live GPS walking', () => {
     g.gpsEst = { x: 0, y: 50, acc: 5, t: 0 };
     for (let i = 0; i < 120; i++) g.followGps(1 / 60);
     expect(g.heading).toBeGreaterThan(85);
+  });
+});
+
+describe('corridorSpots', () => {
+  const line = Array.from({ length: 11 }, (_, i) => ({ x: 0, y: i * 100, d: i * 100 }));
+
+  it('picks a point about every spacing and ends on the last point', () => {
+    expect(corridorSpots(line, 300, 12).map((p) => p.d)).toEqual([300, 600, 900, 1000]);
+  });
+
+  it('thins to the limit and keeps both ends', () => {
+    const spots = corridorSpots(line, 100, 3);
+    expect(spots.map((p) => p.d)).toEqual([100, 600, 1000]);
+  });
+
+  it('is empty for an empty route', () => {
+    expect(corridorSpots([], 300, 12)).toEqual([]);
   });
 });

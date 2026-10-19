@@ -3570,14 +3570,16 @@ export class Game {
 
   /** Shift S: fetch the map around here (and the destination) now, so it loads without a connection later. */
   private async saveOffline() {
-    const spots = [this.proj.toLatLon(this.x, this.y)];
-    if (this.dest) spots.push(this.proj.toLatLon(this.dest.x, this.dest.y));
     const radius = this.vehicle.loadRadius;
+    // along the route when there is one, so the whole way opens offline, not just both ends
+    const along = this.route ? corridorSpots(this.route.points, radius * 1.5, 12) : [];
+    const spots = [this.proj.toLatLon(this.x, this.y), ...along.map((p) => this.proj.toLatLon(p.x, p.y))];
+    if (this.dest && !along.length) spots.push(this.proj.toLatLon(this.dest.x, this.dest.y));
     this.speech.say('Saving this area for offline use.', 'high');
     const none = new AbortController().signal;
     try {
       for (const c of spots) await Promise.all([fetchTileArea(c, radius, none), fetchRoads(c, radius, none), fetchPlaces(c, radius, none)]);
-      this.speech.say(`Saved the map around ${spots.length > 1 ? 'here and the destination' : 'here'} for offline use.`, 'high');
+      this.speech.say(`Saved the map around ${along.length ? 'here and along the route' : spots.length > 1 ? 'here and the destination' : 'here'} for offline use.`, 'high');
     } catch {
       this.speech.say('Could not save the area. Check your connection.', 'high');
     }
@@ -3815,6 +3817,22 @@ const IMPERIAL_COUNTRIES = new Set(['us', 'pr', 'gu', 'vi', 'as', 'mp', 'lr']);
 /** An angle rounded to 5 degrees, for speech. */
 function deg5(a: number): number {
   return Math.round(Math.abs(a) / 5) * 5;
+}
+
+/** Points along a route about `spacing` metres apart, ending at the last point, at most `max` of them. */
+export function corridorSpots<P extends { x: number; y: number; d: number }>(points: P[], spacing: number, max: number): P[] {
+  if (!points.length) return [];
+  const out: P[] = [];
+  let next = spacing;
+  for (const p of points) {
+    if (p.d < next) continue;
+    out.push(p);
+    next = p.d + spacing;
+  }
+  const last = points[points.length - 1];
+  if (out[out.length - 1] !== last) out.push(last);
+  if (out.length <= max) return out;
+  return Array.from({ length: max }, (_, i) => out[Math.round((i * (out.length - 1)) / (max - 1))]);
 }
 
 function cap(s: string): string {

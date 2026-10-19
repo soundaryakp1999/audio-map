@@ -19,17 +19,22 @@ const HIGHWAY_SET = new Set(HIGHWAYS.split('|'));
 const SNAP = 1.6;
 
 const KEPT = 'audio-map-tiles-v1';
+/** a tile is tens of kilobytes, so this keeps the cache to a few tens of megabytes */
+const KEPT_MAX = 600;
 
-/**
- * Network first, keeping what arrives; offline, a tile or tile list seen before is served instead.
- * ponytail: the cache only grows, add an eviction pass if storage becomes a problem.
- */
+async function keep(url: string, res: Response) {
+  const c = await caches.open(KEPT);
+  await c.put(url, res);
+  const keys = await c.keys(); // oldest first
+  for (const k of keys.slice(0, Math.max(0, keys.length - KEPT_MAX))) await c.delete(k);
+}
+
+/** Network first, keeping what arrives; offline, a tile or tile list seen before is served instead. */
 export async function fetchKept(url: string, init: RequestInit = {}): Promise<Response> {
   try {
     const r = await fetch(url, init);
     if (r.ok && typeof caches !== 'undefined') {
-      const copy = r.clone();
-      void caches.open(KEPT).then((c) => c.put(url, copy)).catch(() => undefined);
+      void keep(url, r.clone()).catch(() => undefined);
     }
     return r;
   } catch (e) {
