@@ -1081,6 +1081,29 @@ describe('phone screen', () => {
     expect(said.at(-1)).not.toMatch(/from your route|only accurate/);
   });
 
+  it('Shift K says the address and shares a map link, and falls back to the clipboard', async () => {
+    const share = vi.fn(async () => {});
+    vi.stubGlobal('navigator', { share });
+    const { game, said } = setup();
+    game.run('K', { shift: true });
+    await flush();
+    expect(said[0]).toMatch(/Oak Street.*Coordinates 51\.\d+, -?0\.\d+\. Sharing your location now\.$/);
+    expect(share).toHaveBeenCalledOnce();
+    const sent = (share.mock.calls[0] as unknown as [{ text: string }])[0].text;
+    expect(sent).toMatch(/^I need help\. .*Oak Street.* Map: https:\/\/www\.openstreetmap\.org\/\?mlat=51\./);
+    expect(said.at(-1)).toBe('Location shared.');
+    const write = vi.fn(async () => {});
+    vi.stubGlobal('navigator', { clipboard: { writeText: write } });
+    game.run('K', { shift: true });
+    await flush();
+    expect(write).toHaveBeenCalledOnce();
+    expect(said.at(-1)).toBe('Message copied. Paste it into a message to someone you trust.');
+    vi.unstubAllGlobals();
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    vi.stubGlobal('window', { dispatchEvent: () => true });
+    vi.stubGlobal('localStorage', { getItem: (k: string) => memory.get(k) ?? null, setItem: (k: string, v: string) => void memory.set(k, v), removeItem: (k: string) => void memory.delete(k) });
+  });
+
   it('picks units by country until the player chooses: imperial in the US, metric in India', async () => {
     const units: string[] = [];
     vi.mocked(fetchCountry).mockResolvedValueOnce('us').mockResolvedValueOnce('in');
