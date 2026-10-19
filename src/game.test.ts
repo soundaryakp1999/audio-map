@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Game, minutesText, paceScale } from './game';
+import { Game, crossingAdvice, minutesText, paceScale } from './game';
 import { loadNotes, saveNotes } from './notes';
 import { Projection } from './geo';
 import { loadSettings } from './settings';
@@ -1212,5 +1212,29 @@ describe('turn reminder distances', () => {
     expect(slow[0]).toBeCloseTo(42);
     expect(fast[0]).toBeCloseTo(120);
     expect(fast[2]).toBeGreaterThan(slow[2]);
+  });
+});
+
+describe('crossing advice', () => {
+  it('says what to wait for from how the crossing is mapped', () => {
+    expect(crossingAdvice('Crossing with signals', ['push button', 'audible signal'])).toBe('At the signal crossing. Press the button. Wait for the audible signal, then check for traffic before crossing.');
+    expect(crossingAdvice('Crossing with signals', [])).toMatch(/No audible signal is mapped here/);
+    expect(crossingAdvice('Crossing with signals', ['flush kerb, no edge to feel'])).toMatch(/flush/);
+    expect(crossingAdvice('Pedestrian crossing', [])).toMatch(/uncontrolled crossing/);
+    expect(crossingAdvice('Steps', [])).toBe('');
+  });
+
+  it('speaks once when a walker stops at a crossing', () => {
+    const { g, said } = setup();
+    const at = ll(0, 52);
+    g.world.addPlaces({ places: [], signals: new Set<number>(), crossings: [{ ...at, text: 'Crossing with signals', extras: ['audible signal'] }] });
+    g.speed = 0;
+    g.checkAtCrossing();
+    g.checkAtCrossing();
+    expect(said).toEqual(['At the signal crossing. Wait for the audible signal, then check for traffic before crossing.']);
+    g.speed = 1.4;
+    g.announcedHazards.clear();
+    g.checkAtCrossing();
+    expect(said).toHaveLength(1);
   });
 });

@@ -702,6 +702,7 @@ export class Game {
         this.nextPlaceCheck = this.clock + 0.25;
         this.checkPlaces();
         this.checkHazards();
+        this.checkAtCrossing();
         this.checkNotes();
       }
       this.updateDestination();
@@ -1487,6 +1488,18 @@ export class Game {
       void isDark(this.proj.toLatLon(this.x, this.y)).then((d) => (this.dark = d));
     }
     return this.dark;
+  }
+
+  /** Standing at a crossing: what to wait for before stepping out, said once. */
+  private checkAtCrossing() {
+    if (!this.settings.announceHazards || this.vehicle.id !== 'walker' || this.speed > 0.5) return;
+    const hit = this.world!.hazardsNear(this.x, this.y, 8).find((n) => crossingAdvice(n.hazard.text, n.hazard.extras ?? []));
+    if (!hit) return;
+    const h = hit.hazard;
+    const key = `at|${Math.round(h.x)},${Math.round(h.y)}`;
+    if (this.clock - (this.announcedHazards.get(key) ?? -1e9) < 120) return;
+    this.announcedHazards.set(key, this.clock);
+    this.speech.say(crossingAdvice(h.text, h.extras ?? []), 'high');
   }
 
   /** Crossings and steps just ahead, for walkers and cyclists. */
@@ -3821,6 +3834,18 @@ function deg5(a: number): number {
 /** How much to stretch the spoken-turn distances: 1 at the usual pace `ref` (m/s), up to double when faster, down to 0.7 when slower. */
 export function paceScale(speed: number, ref: number): number {
   return speed < 0.3 ? 1 : Math.max(0.7, Math.min(2, speed / ref));
+}
+
+/** What to do at the kerb of a crossing, from how it is mapped; empty for other hazards. Never says traffic has stopped. */
+export function crossingAdvice(text: string, extras: string[]): string {
+  const has = (e: string) => extras.includes(e);
+  if (text === 'Crossing with signals') {
+    const start = has('push button') || has('vibrating button') ? 'Press the button. ' : '';
+    const wait = has('audible signal') ? 'Wait for the audible signal, then check for traffic before crossing.' : 'No audible signal is mapped here. Listen for traffic and check before crossing.';
+    return `At the signal crossing. ${start}${wait}${has('flush kerb, no edge to feel') ? ' The kerb is flush, so there is no edge to feel.' : ''}`;
+  }
+  if (text === 'Pedestrian crossing') return 'At an uncontrolled crossing. Wait until traffic has stopped, and listen before crossing.';
+  return '';
 }
 
 function cap(s: string): string {
