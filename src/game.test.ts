@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Game, minutesText } from './game';
+import { Game, corridorSpots, minutesText } from './game';
 import { loadNotes, saveNotes } from './notes';
 import { Projection } from './geo';
 import { loadSettings } from './settings';
@@ -1037,6 +1037,27 @@ describe('phone screen', () => {
     expect(said.at(-1)).toMatch(/^Unlit path ahead, 20 metres/);
   });
 
+  it('vibrates for a hazard, and not when haptics are off', () => {
+    const vibrate = vi.fn();
+    vi.stubGlobal('navigator', { vibrate });
+    const { g } = setup();
+    g.world.addPlaces({ places: [], signals: new Set<number>(), unlit: [ll(0, 70)] });
+    g.speed = 1.4;
+    g.dark = true;
+    g.darkCheckedAt = g.clock;
+    g.checkHazards();
+    expect(vibrate).toHaveBeenCalledWith([500]);
+    vibrate.mockClear();
+    g.announcedHazards.clear();
+    g.settings.haptics = false;
+    g.checkHazards();
+    expect(vibrate).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    vi.stubGlobal('window', { dispatchEvent: () => true });
+    vi.stubGlobal('localStorage', { getItem: (k: string) => memory.get(k) ?? null, setItem: (k: string, v: string) => void memory.set(k, v), removeItem: (k: string) => void memory.delete(k) });
+  });
+
   it('Shift S fetches the map here and at the destination, and says so when it fails', async () => {
     vi.mocked(fetchTileArea).mockResolvedValue({ roads: rawRoads(), places: { places: [], signals: new Set<number>() } });
     vi.mocked(fetchPlaces).mockResolvedValue({ places: [], signals: new Set<number>() });
@@ -1102,6 +1123,19 @@ describe('phone screen', () => {
     vi.stubGlobal('requestAnimationFrame', () => 0);
     vi.stubGlobal('window', { dispatchEvent: () => true });
     vi.stubGlobal('localStorage', { getItem: (k: string) => memory.get(k) ?? null, setItem: (k: string, v: string) => void memory.set(k, v), removeItem: (k: string) => void memory.delete(k) });
+  });
+
+  it('Shift S also fetches along the planned route', async () => {
+    vi.mocked(fetchTileArea).mockResolvedValue({ roads: rawRoads(), places: { places: [], signals: new Set<number>() } });
+    const { game, said, g } = setup();
+    g.route = { points: [{ x: 0, y: 50, d: 0 }, { x: 0, y: 450, d: 400 }, { x: 0, y: 850, d: 800 }], maneuvers: [], length: 800, partial: false };
+    const radius = g.vehicle.loadRadius;
+    game.run('S', { shift: true });
+    await flush();
+    const fetched = vi.mocked(fetchRoads).mock.calls.length;
+    expect(fetched).toBe(1 + corridorSpots(g.route.points, radius * 1.5, 12).length);
+    expect(fetched).toBeGreaterThan(1);
+    expect(said.at(-1)).toBe('Saved the map around here and along the route for offline use.');
   });
 
   it('picks units by country until the player chooses: imperial in the US, metric in India', async () => {
@@ -1230,5 +1264,22 @@ describe('live GPS walking', () => {
     g.gpsEst = { x: 0, y: 50, acc: 5, t: 0 };
     for (let i = 0; i < 120; i++) g.followGps(1 / 60);
     expect(g.heading).toBeGreaterThan(85);
+  });
+});
+
+describe('corridorSpots', () => {
+  const line = Array.from({ length: 11 }, (_, i) => ({ x: 0, y: i * 100, d: i * 100 }));
+
+  it('picks a point about every spacing and ends on the last point', () => {
+    expect(corridorSpots(line, 300, 12).map((p) => p.d)).toEqual([300, 600, 900, 1000]);
+  });
+
+  it('thins to the limit and keeps both ends', () => {
+    const spots = corridorSpots(line, 100, 3);
+    expect(spots.map((p) => p.d)).toEqual([100, 600, 1000]);
+  });
+
+  it('is empty for an empty route', () => {
+    expect(corridorSpots([], 300, 12)).toEqual([]);
   });
 });

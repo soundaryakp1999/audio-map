@@ -8,6 +8,7 @@ import { bindingsOf, describeBinding, lookup, type ActionId, type Binding } from
 import { MapView } from './mapview';
 import { HIGHWAYS, fetchPlaces, fetchRoads, fetchCountry, fetchNamedAreas, fetchRoadsBox, fetchStopRoutes, reverseGeocode, type NamedArea, type RawPlaces, type RawRoads } from './osm';
 import { downloadGpx, routeToGpx } from './gpx';
+import { buzz } from './haptics';
 import { crossingLeg, drivesOnLeft, locate, routesText, spotText, stopDetail } from './placeinfo';
 import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
@@ -994,6 +995,7 @@ export class Game {
     const turn = ringNode ? null : this.routeTurnAt(j.nodes);
     if (turn) {
       this.audio.routeTurnHere(turn.rel);
+      this.buzz(turn.rel < 0 ? 'left' : 'right');
       for (let k = 0; k <= 2; k++) this.spokenSteps.add(k);
       this.speech.say(`Here: ${this.stepWithThen(turn)}.`, 'high');
       return;
@@ -1117,6 +1119,7 @@ export class Game {
     if (a.deadEnd) {
       this.announcedNodes.set(a.node.id, this.clock);
       this.audio.deadEnd();
+      this.buzz('deadEnd');
       this.speech.say(`${this.endWord(a)} in ${fmtDistance(a.forward, u)}${this.bendText(a.arrival, this.heading)}.`, pr);
       return;
     }
@@ -1477,6 +1480,10 @@ export class Game {
     return parts.join('; ');
   }
 
+  private buzz(kind: string) {
+    if (this.settings.haptics) buzz(kind);
+  }
+
   private dark = false;
   private darkCheckedAt = -Infinity;
 
@@ -1501,6 +1508,7 @@ export class Game {
       if (this.clock - (this.announcedHazards.get(key) ?? -1e9) < 120) continue;
       this.announcedHazards.set(key, this.clock);
       this.audio.hazardCue(h.text, relAngle(this.heading, bearingTo(this.x, this.y, h.x, h.y)), 1 - Math.min(1, d / reach));
+      this.buzz(h.text);
       const leg = h.text === 'Pedestrian crossing' || h.text === 'Crossing with signals' ? crossingLeg(this.world!, h.x, h.y, this.settings.units) : '';
       const extras = h.extras?.length ? `. ${cap(h.extras.join(', '))}` : '';
       this.speech.say(`${h.text} ahead, ${fmtDistance(d, this.settings.units)}${leg ? `, ${leg}` : ''}${extras}`, 'high');
@@ -1575,6 +1583,7 @@ export class Game {
     const d = dist(this.x, this.y, this.dest.x, this.dest.y);
     if (d < Math.max(this.arriveRadius, this.dest.radius ?? 0)) {
       this.audio.arrival();
+      this.buzz('arrival');
       const done = this.trip ? ` Trip: ${this.tripText(this.trip)}. Press U to hear it again.` : '';
       this.lastTrip = this.trip ? `Last trip to ${this.dest.name}: ${this.tripText(this.trip)}.` : '';
       this.speech.say(`Arrived at ${this.dest.name}.${done}`, 'high');
@@ -2104,6 +2113,7 @@ export class Game {
       this.lastWrongWay = this.clock;
       this.furthestProg = this.routeProg;
       this.audio.wrongWay();
+      this.buzz('wrongWay');
       this.speech.say('Wrong way. Turn around.', 'high');
     }
 
@@ -2150,7 +2160,10 @@ export class Game {
       if (k < 2) {
         this.speech.say(`In ${fmtDistance(d, u)}, ${this.whichIntersection(m)}${text}.`, k === 0 ? 'normal' : 'high');
       } else if (m.kind !== 'arrive') {
-        if (m.kind !== 'roundabout' && m.kind !== 'cross') this.audio.turnCue(m.rel); // its overall direction isn't the way to turn in
+        if (m.kind !== 'roundabout' && m.kind !== 'cross') {
+          this.audio.turnCue(m.rel); // its overall direction isn't the way to turn in
+          this.buzz(m.rel < 0 ? 'left' : 'right');
+        }
         this.speech.say(`${cap(text)}.`, 'high');
       }
       break;
@@ -3451,6 +3464,7 @@ export class Game {
   setTarget(t: Target) {
     if (dist(this.x, this.y, t.x, t.y) < Math.max(this.arriveRadius, t.radius ?? 0)) {
       this.audio.arrival();
+      this.buzz('arrival');
       return this.speech.say(`You are already at ${t.name}.`, 'high');
     }
     this.dest = t;
@@ -3608,14 +3622,16 @@ export class Game {
 
   /** Shift S: fetch the map around here (and the destination) now, so it loads without a connection later. */
   private async saveOffline() {
-    const spots = [this.proj.toLatLon(this.x, this.y)];
-    if (this.dest) spots.push(this.proj.toLatLon(this.dest.x, this.dest.y));
     const radius = this.vehicle.loadRadius;
+    // along the route when there is one, so the whole way opens offline, not just both ends
+    const along = this.route ? corridorSpots(this.route.points, radius * 1.5, 12) : [];
+    const spots = [this.proj.toLatLon(this.x, this.y), ...along.map((p) => this.proj.toLatLon(p.x, p.y))];
+    if (this.dest && !along.length) spots.push(this.proj.toLatLon(this.dest.x, this.dest.y));
     this.speech.say('Saving this area for offline use.', 'high');
     const none = new AbortController().signal;
     try {
       for (const c of spots) await Promise.all([fetchTileArea(c, radius, none), fetchRoads(c, radius, none), fetchPlaces(c, radius, none)]);
-      this.speech.say(`Saved the map around ${spots.length > 1 ? 'here and the destination' : 'here'} for offline use.`, 'high');
+      this.speech.say(`Saved the map around ${along.length ? 'here and along the route' : spots.length > 1 ? 'here and the destination' : 'here'} for offline use.`, 'high');
     } catch {
       this.speech.say('Could not save the area. Check your connection.', 'high');
     }
@@ -3853,6 +3869,22 @@ const IMPERIAL_COUNTRIES = new Set(['us', 'pr', 'gu', 'vi', 'as', 'mp', 'lr']);
 /** An angle rounded to 5 degrees, for speech. */
 function deg5(a: number): number {
   return Math.round(Math.abs(a) / 5) * 5;
+}
+
+/** Points along a route about `spacing` metres apart, ending at the last point, at most `max` of them. */
+export function corridorSpots<P extends { x: number; y: number; d: number }>(points: P[], spacing: number, max: number): P[] {
+  if (!points.length) return [];
+  const out: P[] = [];
+  let next = spacing;
+  for (const p of points) {
+    if (p.d < next) continue;
+    out.push(p);
+    next = p.d + spacing;
+  }
+  const last = points[points.length - 1];
+  if (out[out.length - 1] !== last) out.push(last);
+  if (out.length <= max) return out;
+  return Array.from({ length: max }, (_, i) => out[Math.round((i * (out.length - 1)) / (max - 1))]);
 }
 
 function cap(s: string): string {

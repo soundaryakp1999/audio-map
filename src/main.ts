@@ -8,6 +8,8 @@ import { loadFavorites, removeFavorite } from './favorites';
 import { geocode, type GeocodeResult } from './osm';
 import { loadSettings, saveSettings, type Settings } from './settings';
 import { initPreview, stopPreview } from './preview';
+import { startBackground, stopBackground } from './background';
+import type { ActionId } from './keymap';
 import type { PlaceGroup } from './world';
 import { Speech } from './speech';
 import { Tutorial } from './tutorial';
@@ -74,7 +76,7 @@ function bindSettings() {
       });
     }
   }
-  for (const id of ['announceStreets', 'announcePlaces', 'announceHazards', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap', 'accessibleRoute'] as const) {
+  for (const id of ['announceStreets', 'announcePlaces', 'announceHazards', 'haptics', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap', 'accessibleRoute'] as const) {
     const el = $<HTMLInputElement>(id);
     el.checked = settings[id];
     el.addEventListener('change', () => update({ [id]: el.checked }));
@@ -297,6 +299,11 @@ const phone = new Phone($('phone'), () => game, {
   guide: () => {
     if (!settings.turnByTurn || !settings.beaconSound) update({ turnByTurn: true, beaconSound: true });
     void keepAwake();
+    const act = (id: ActionId) => {
+      const b = game?.keyFor(id);
+      if (b) game?.run(b.key, b);
+    };
+    startBackground({ next: () => act('instructions'), previous: () => act('whereAmI') }, 'Walking guidance');
   },
 });
 
@@ -336,10 +343,26 @@ function leavePhone() {
   $('app').inert = false;
   void wakeLock?.release().catch(() => {});
   wakeLock = null;
+  stopBackground();
 }
 
 $('phone-btn').addEventListener('click', startPhone);
 $('ph-begin').addEventListener('click', startPhone);
+// Chrome offers installing only after its own checks pass; the button appears when it does
+type InstallEvent = Event & { prompt(): Promise<unknown> };
+let installEvent: InstallEvent | null = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installEvent = e as InstallEvent;
+  $('ph-install').hidden = false;
+});
+window.addEventListener('appinstalled', () => ($('ph-install').hidden = true));
+$('ph-install').addEventListener('click', async () => {
+  await installEvent?.prompt();
+  installEvent = null;
+  $('ph-install').hidden = true;
+});
+
 $('ph-fullmenu').addEventListener('click', () => {
   leavePhone();
   openMenu('main');
