@@ -848,11 +848,14 @@ for (const b of document.querySelectorAll<HTMLButtonElement>('dialog [data-cance
 // Back at the top of each dialog, so it is the first thing a screen reader finds; the menu has Resume
 addBackButtons(document, ['menu', 'osmnote']); // the map error report has its own Back between steps
 backClosesDialogs(document);
-// Shaken while typed text can still be undone, as when walking with the phone in a pocket, iOS
-// offers "Undo Typing". Setting the text from code ends that undo history, so typed search and
-// note boxes are emptied when their dialog closes. Saved places keeps its names, which it fills in.
-for (const dlg of document.querySelectorAll<HTMLDialogElement>('dialog:not(#saved)')) {
-  dlg.addEventListener('close', () => {
-    for (const i of dlg.querySelectorAll<HTMLInputElement>('input[type=search], input[type=text]')) i.value = '';
-  });
+// Shaken while typed text can still be undone, as when walking with the phone in a pocket after
+// typing a destination, iOS offers "Undo Typing". Setting the text from code leaves that history,
+// but WebKit drops the page's whole undo history whenever a frame is unloaded, so a blank frame is
+// added and removed straight away each time a dialog closes.
+function forgetTyping() {
+  const f = document.createElement('iframe');
+  f.hidden = true;
+  document.body.appendChild(f);
+  f.remove();
 }
+for (const dlg of document.querySelectorAll<HTMLDialogElement>('dialog')) dlg.addEventListener('close', forgetTyping);
