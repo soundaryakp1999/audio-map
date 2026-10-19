@@ -48,6 +48,15 @@ export function matchPhrase(transcript: string): Action | null {
   return best ? best[1] : null;
 }
 
+export type Travel = { last: true } | { query: string };
+
+/** "Take me to the library" searches for a place; "take me to my last destination" repeats the last trip. */
+export function parseTravel(transcript: string): Travel | null {
+  const m = norm(transcript).match(/^(?:please )?(?:take me|navigate|go|head|walk) (?:to|back to) (.+)$/);
+  if (!m) return null;
+  return /^(?:(?:my|the) )?(?:last|previous)(?: (?:destination|place|trip))?$/.test(m[1]) ? { last: true } : { query: m[1].replace(/^the /, '') };
+}
+
 interface Recognition {
   continuous: boolean;
   interimResults: boolean;
@@ -65,7 +74,7 @@ function recognitionCtor(): (new () => Recognition) | undefined {
 }
 
 /** Returns a toggle, or null when the browser has no speech recognition. */
-export function setupVoice(getGame: () => Driver | null, say: (s: string) => void, onChange: (on: boolean) => void): (() => boolean) | null {
+export function setupVoice(getGame: () => Driver | null, say: (s: string) => void, onChange: (on: boolean) => void, travel?: (t: Travel) => void): (() => boolean) | null {
   const Ctor = recognitionCtor();
   if (!Ctor) return null;
   const rec = new Ctor();
@@ -80,6 +89,11 @@ export function setupVoice(getGame: () => Driver | null, say: (s: string) => voi
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const r = e.results[i];
       if (!r.isFinal) continue;
+      const trip = travel && parseTravel(r[0].transcript);
+      if (trip) {
+        travel!(trip);
+        continue;
+      }
       const a = matchPhrase(r[0].transcript);
       if (a) perform(game, a);
       else say(`Did not understand ${r[0].transcript.trim()}.`);

@@ -295,6 +295,7 @@ const phone = new Phone($('phone'), () => game, {
     return voiceLabel();
   },
   voiceLabel,
+  toggleListen: () => toggleVoice?.() ?? false,
   guide: () => {
     if (!settings.turnByTurn || !settings.beaconSound) update({ turnByTurn: true, beaconSound: true });
     void keepAwake();
@@ -716,7 +717,26 @@ const voiceBtn = $<HTMLButtonElement>('voice-btn');
 const toggleVoice = setupVoice(
   () => game,
   (s) => speech.say(s, 'high'),
-  (on) => voiceBtn.setAttribute('aria-pressed', String(on)),
+  (on) => {
+    voiceBtn.setAttribute('aria-pressed', String(on));
+    $('ph-listen').setAttribute('aria-pressed', String(on));
+  },
+  async (t) => {
+    if (!game) return;
+    if ('last' in t) {
+      const r = loadRecents()[0];
+      if (!r) return speech.say('No last destination yet.', 'high');
+      return game.setTargetLatLon(r.name, r.lat, r.lon, 0);
+    }
+    speech.say(`Searching for ${t.query}.`, 'normal');
+    try {
+      const hit = (await geocode(t.query, game.position ?? undefined))[0];
+      if (hit) game.setTargetLatLon(shortName(hit.name), hit.lat, hit.lon, 0);
+      else speech.say(`No results for ${t.query}.`, 'high');
+    } catch {
+      speech.say('Search failed. Check your connection.', 'high');
+    }
+  },
 );
 if (toggleVoice) {
   voiceBtn.addEventListener('click', toggleVoice);

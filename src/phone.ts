@@ -37,6 +37,8 @@ export interface PhoneHooks {
   /** switch between the screen reader and the built-in voice; returns the button's new label */
   toggleVoice(): string;
   voiceLabel(): string;
+  /** turn spoken commands on or off; false when the browser cannot do them */
+  toggleListen(): boolean;
   /** turn on turn by turn and the beacon, and keep the screen awake */
   guide(): void;
 }
@@ -167,6 +169,10 @@ export class Phone {
     this.el('ph-where').addEventListener('click', () => this.hooks.openSearch());
     this.el('ph-start').addEventListener('click', () => this.start());
     this.el('ph-here').addEventListener('click', () => this.action('whereAmI'));
+    this.el('ph-listen').addEventListener('click', () => {
+      const on = this.hooks.toggleListen();
+      this.el('ph-listen').setAttribute('aria-pressed', String(on));
+    });
     this.el('ph-nearby').addEventListener('click', () => this.openNearby());
     const kinds = this.el('ph-near-kinds');
     for (const [group, label] of NEAR_KINDS) {
