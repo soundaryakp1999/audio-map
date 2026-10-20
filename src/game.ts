@@ -1652,6 +1652,15 @@ export class Game {
     return `${cap(compass8(heading))}: ${items.length ? items.join('. ') : `nothing mapped within ${fmtDistance(reach, u)}`}.`;
   }
 
+  /** Words added at the kerb of a signal crossing, e.g. a reminder that the signal watch is off; set by the page. */
+  signalHint: () => string = () => '';
+
+  /** Distance in metres to the nearest mapped crossing with signals within `r`, or null. */
+  signalCrossingWithin(r: number): number | null {
+    const near = this.world?.hazardsNear(this.x, this.y, r).filter((n) => n.hazard.text === 'Crossing with signals') ?? [];
+    return near.length ? Math.min(...near.map((n) => n.d)) : null;
+  }
+
   /** Standing at a crossing: what to wait for before stepping out, said once. */
   private checkAtCrossing() {
     if (!this.settings.announceHazards || this.vehicle.id !== 'walker' || this.speed > 0.5) return;
@@ -1661,7 +1670,8 @@ export class Game {
     const key = `at|${Math.round(h.x)},${Math.round(h.y)}`;
     if (this.clock - (this.announcedHazards.get(key) ?? -1e9) < 120) return;
     this.announcedHazards.set(key, this.clock);
-    this.speech.say(crossingAdvice(h.text, h.extras ?? []), 'high');
+    const hint = h.text === 'Crossing with signals' ? this.signalHint() : '';
+    this.speech.say(`${crossingAdvice(h.text, h.extras ?? [])}${hint ? ` ${hint}` : ''}`, 'high');
   }
 
   /** Crossings and steps just ahead, for walkers and cyclists. */
