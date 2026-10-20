@@ -1271,15 +1271,16 @@ describe('phone screen', () => {
     vi.mocked(fetchCountry).mockResolvedValueOnce('us').mockResolvedValueOnce('in');
     const { g } = setup();
     g.onUnits = (u: string) => units.push(u);
-    await g.autoUnits({ lat: 40.1, lon: -88.2 });
+    await g.learnCountry({ lat: 40.1, lon: -88.2 });
     expect(g.settings.units).toBe('imperial');
-    await g.autoUnits({ lat: 18.9, lon: 72.8 });
+    await g.learnCountry({ lat: 18.9, lon: 72.8 });
     expect(g.settings.units).toBe('metric');
     expect(units).toEqual(['imperial', 'metric']);
     g.settings.unitsChosen = true;
     vi.mocked(fetchCountry).mockResolvedValueOnce('us');
-    await g.autoUnits({ lat: 40.1, lon: -88.2 });
+    await g.learnCountry({ lat: 40.1, lon: -88.2 });
     expect(g.settings.units).toBe('metric');
+    expect(g.country).toBe('us'); // still known, for the signal watch
   });
 });
 

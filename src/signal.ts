@@ -5,6 +5,13 @@
 
 export type SignalState = 'walk' | 'dontWalk' | 'unsure' | 'none';
 
+/** Countries whose signals look like those the detector was trained on: a white walking figure and an orange hand (the US and Canada, and US territories). */
+const TRAINED_STYLE = new Set(['us', 'ca', 'pr', 'gu', 'vi', 'as', 'mp']);
+/** A warning for countries with other signal styles; empty where the style matches, or the country is not known yet. */
+export function styleWarning(country: string | null): string {
+  return country && !TRAINED_STYLE.has(country) ? 'This detector was trained on US-style signals and may not recognise signals here.' : '';
+}
+
 /** Reads the camera frame and says what signal it shows; may be slow, may fail. */
 export type Read = (video: HTMLVideoElement) => Promise<SignalState>;
 

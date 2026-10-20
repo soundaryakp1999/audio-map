@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CONFIRM, Confirmer } from './signal';
+import { CONFIRM, Confirmer, styleWarning } from './signal';
 
 describe('Confirmer', () => {
   const feed = (c: Confirmer, states: Parameters<Confirmer['add']>[0][]) => states.map((s) => c.add(s));
@@ -29,4 +29,13 @@ describe('Confirmer', () => {
     const c = new Confirmer();
     expect(feed(c, ['walk', 'walk', 'dontWalk', 'walk', 'walk', 'walk'])).toEqual([null, null, null, null, null, 'walk']);
   });
+});
+
+describe('styleWarning', () => {
+  it('says nothing where signals look like the training photos', () => {
+    expect(styleWarning('us')).toBe('');
+    expect(styleWarning('ca')).toBe('');
+  });
+  it('warns elsewhere', () => expect(styleWarning('in')).toMatch(/US-style signals/));
+  it('says nothing while the country is unknown', () => expect(styleWarning(null)).toBe(''));
 });

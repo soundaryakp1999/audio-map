@@ -300,7 +300,7 @@ export class Game {
   onJump?: () => void;
   onNote?: () => void;
   onOsmNote?: (at: LatLon) => void;
-  /** units changed to suit the country (see autoUnits) */
+  /** units changed to suit the country (see learnCountry) */
   onUnits?: (u: 'metric' | 'imperial') => void;
   /** played on a touch screen: leave out keyboard hints */
   touch = false;
@@ -372,7 +372,7 @@ export class Game {
     }
 
     this.speech.say(`${liveOff ? 'Live GPS off. ' : ''}Loading map data${placeName ? ` for ${placeName}` : ''}. Please wait.`, 'high');
-    void this.autoUnits(center);
+    void this.learnCountry(center);
     await this.firstLoad();
   }
 
@@ -423,10 +423,13 @@ export class Game {
     );
   }
 
-  /** Units by country, until the player picks them in settings: imperial in the United States, metric elsewhere. */
-  private async autoUnits(center: LatLon) {
-    if (this.settings.unitsChosen) return;
+  /** Two-letter code (lower case) of the country being explored, once known. */
+  country: string | null = null;
+
+  /** Find the country; units follow it (imperial in the United States, metric elsewhere) until the player picks them in settings. */
+  private async learnCountry(center: LatLon) {
     const cc = await fetchCountry(center);
+    if (cc) this.country = cc;
     if (!cc || this.settings.unitsChosen) return;
     const units = IMPERIAL_COUNTRIES.has(cc) ? 'imperial' : 'metric';
     if (units === this.settings.units) return;
