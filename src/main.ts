@@ -311,7 +311,8 @@ const shakeLabel = () => `Shake for address: ${settings.shake ? 'on' : 'off'}`;
 const voiceLabel = () => (settings.speechMode === 'voice' ? 'Speech: built-in voice' : 'Speech: screen reader');
 let signal: SignalWatcher | null = null;
 let signalModel: SignalModel | null = null;
-const SIGNAL_SPEECH = { walk: 'Walk signal, maybe. Check for traffic.', dontWalk: "Don't walk signal.", unsure: 'Not sure. Listen to traffic.', none: 'Signal lost.' };
+// spoken once when the reading changes; the beeps carry on after it
+const SIGNAL_SPEECH = { walk: 'Walk signal detected.', dontWalk: "Don't walk signal detected.", unsure: 'Signal unclear.', none: 'Signal lost.' };
 function stopSignal() {
   signal?.stop();
   signal = null;
