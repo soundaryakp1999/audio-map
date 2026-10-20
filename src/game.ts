@@ -15,7 +15,7 @@ import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
 import { addFavorite } from './favorites';
 import { addRecent } from './recents';
-import { DEFAULT_ACCURACY, LiveGps, MIN_COURSE_SPEED, POOR_ACCURACY, easeAngle, fuse, pickHeading, snapRadius, type Estimate, type GpsFix } from './gps';
+import { DEFAULT_ACCURACY, LiveGps, MIN_COURSE_SPEED, POOR_ACCURACY, coast, easeAngle, fuse, pickHeading, snapRadius, type Estimate, type GpsFix } from './gps';
 import { loadNotes, saveNotes } from './notes';
 import { fmtDistance, fmtSpeed, fmtSpeedShort, saveSettings, type Settings, type VehicleId } from './settings';
 import type { SoundTheme } from './audio/themes';
@@ -837,7 +837,8 @@ export class Game {
     const f = this.liveFix;
     const e = this.gpsEst;
     if (!f || !e) return;
-    const t = { x: e.x, y: e.y };
+    // the last fix is up to a second old: carry on from it at the pace and course it gave
+    const t = coast(e, performance.now() / 1000);
     // a walker's fix is likely on a street: pull it onto the nearest one when the fix is good enough
     const r = this.vehicle.id === 'helicopter' ? 0 : snapRadius(e.acc);
     const hit = r ? this.world?.nearestRoad(e.x, e.y, r, this.filter) : null;
@@ -2358,8 +2359,9 @@ export class Game {
     if (!m || (m.kind === 'arrive' && r.partial)) return;
     const d = m.d - this.routeProg;
     const atJunction = this.turnAtJunction(m);
-    // a crossing's last call comes at the kerb, as you step up to cross, not by pace
-    const at = m.kind === 'cross' ? [th[0], th[1], (m.kerb ?? 0) + 3] : th;
+    // a crossing's last call comes at the kerb, as you step up to cross: about two seconds' walk
+    // before it, so the sentence is over before you step off
+    const at = m.kind === 'cross' ? [th[0], th[1], (m.kerb ?? 0) + 3 + 2 * this.speed] : th;
     for (let k = 2; k >= 0; k--) {
       if (d > at[k] || this.spokenSteps.has(k)) continue;
       // a turn at an intersection is called when you are in that intersection (checkInJunction),
@@ -2907,7 +2909,7 @@ export class Game {
     if (poor && !first) return;
     this.liveFix = f;
     const p0 = this.proj.toXY(f.lat, f.lon);
-    this.gpsEst = fuse(this.gpsEst, p0.x, p0.y, acc, performance.now() / 1000, f.speed);
+    this.gpsEst = fuse(this.gpsEst, p0.x, p0.y, acc, performance.now() / 1000, f.speed, f.heading);
     if (!first) return;
     if (Math.hypot(p0.x, p0.y) > 20_000) {
       // projection distortion grows with distance, so begin afresh around the real position
@@ -2920,7 +2922,7 @@ export class Game {
     }
     if (this.live !== live) return;
     const q = this.proj.toXY(f.lat, f.lon);
-    this.gpsEst = { x: q.x, y: q.y, acc, t: performance.now() / 1000 };
+    this.gpsEst = fuse(null, q.x, q.y, acc, performance.now() / 1000, f.speed, f.heading);
     this.x = q.x;
     this.y = q.y;
     this.speech.say('Location found.', 'normal');

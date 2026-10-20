@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compassHeading, easeAngle, heldToPoint, fuse, motionBase, motionBetween, pickHeading, snapRadius } from './gps';
+import { coast, compassHeading, easeAngle, heldToPoint, fuse, motionBase, motionBetween, pickHeading, snapRadius, type Estimate } from './gps';
 
 describe('compassHeading', () => {
   it('uses the iOS compass heading directly', () => {
@@ -60,21 +60,43 @@ describe('easeAngle', () => {
 
 describe('fuse', () => {
   it('starts from the first fix', () => {
-    expect(fuse(null, 5, 6, 20, 0, 0)).toEqual({ x: 5, y: 6, acc: 20, t: 0 });
+    expect(fuse(null, 5, 6, 20, 0, 0)).toEqual({ x: 5, y: 6, acc: 20, t: 0, vx: 0, vy: 0 });
   });
   it('moves most of the way to a more accurate fix', () => {
-    const e = fuse({ x: 0, y: 0, acc: 50, t: 0 }, 100, 0, 5, 1, 0);
+    const e = fuse({ x: 0, y: 0, acc: 50, t: 0, vx: 0, vy: 0 }, 100, 0, 5, 1, 0);
     expect(e.x).toBeGreaterThan(90);
     expect(e.acc).toBeLessThan(5);
   });
   it('barely moves for a much worse fix', () => {
-    const e = fuse({ x: 0, y: 0, acc: 5, t: 0 }, 100, 0, 80, 1, 0);
+    const e = fuse({ x: 0, y: 0, acc: 5, t: 0, vx: 0, vy: 0 }, 100, 0, 80, 1, 0);
     expect(e.x).toBeLessThan(5);
   });
   it('trusts a new fix more after a long gap or fast travel', () => {
-    const slow = fuse({ x: 0, y: 0, acc: 10, t: 0 }, 50, 0, 10, 1, 0);
-    const fast = fuse({ x: 0, y: 0, acc: 10, t: 0 }, 50, 0, 10, 30, 5);
+    const slow = fuse({ x: 0, y: 0, acc: 10, t: 0, vx: 0, vy: 0 }, 50, 0, 10, 1, 0);
+    const fast = fuse({ x: 0, y: 0, acc: 10, t: 0, vx: 0, vy: 0 }, 50, 0, 10, 30, 5);
     expect(fast.x).toBeGreaterThan(slow.x);
+  });
+});
+
+describe('fuse while walking', () => {
+  // walking north at 1.4 m/s with a fix each second
+  const walk = (acc: number, course: number | null) => {
+    let e: Estimate | null = null;
+    for (let t = 0; t <= 60; t++) e = fuse(e, 0, 1.4 * t, acc, t, 1.4, course);
+    return 1.4 * 60 - e!.y;
+  };
+  it('keeps up with a walker instead of trailing behind', () => {
+    // without the course, a 10 m fix leaves the estimate about 9 m behind
+    expect(walk(10, null)).toBeGreaterThan(8);
+    expect(Math.abs(walk(10, 0))).toBeLessThan(0.5);
+    expect(Math.abs(walk(20, 0))).toBeLessThan(0.5);
+  });
+  it('coasts on between fixes at the last pace, for at most two seconds', () => {
+    const e = fuse(null, 0, 0, 5, 10, 1.4, 90);
+    expect(coast(e, 10.5).x).toBeCloseTo(0.7);
+    expect(coast(e, 10.5).y).toBeCloseTo(0);
+    expect(coast(e, 30).x).toBeCloseTo(2.8);
+    expect(coast(fuse(null, 0, 0, 5, 10, 0, 90), 11)).toEqual({ x: 0, y: 0 });
   });
 });
 
@@ -101,7 +123,7 @@ describe('motionBetween', () => {
 
 describe('fuse with bad input', () => {
   it('stays finite for a zero accuracy, NaN speed or NaN position', () => {
-    const prev = { x: 0, y: 0, acc: 0, t: 1 };
+    const prev = { x: 0, y: 0, acc: 0, t: 1, vx: 0, vy: 0 };
     for (const e of [fuse(prev, 5, 5, 0, 1, 0), fuse(prev, 5, 5, 10, 2, NaN), fuse(prev, NaN, 5, 10, 2, 1)]) {
       expect(Object.values(e).every(Number.isFinite)).toBe(true);
     }
