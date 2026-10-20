@@ -400,6 +400,32 @@ describe('turn-by-turn', () => {
     expect(said.length).toBe(n + 1);
   });
 
+  it('calls a turn on the far corner once across, not in the road', () => {
+    const { g, said } = route({ name: 'Far End', x: 0, y: 380 });
+    const r = g.route;
+    const cross = r.maneuvers.find((m: { kind: string }) => m.kind === 'cross');
+    // a sidewalk route: across Elm Street, then right along its far side, at the Oak and Elm corner
+    const turn = { x: 0, y: 205, d: cross.d + 5, rel: 90, kind: 'turn', onto: 'path along Elm Street', ontoNamed: false, trivial: false };
+    r.maneuvers.splice(r.maneuvers.indexOf(cross) + 1, 0, turn);
+    g.speed = 1.4;
+    const walk = (y: number) => {
+      g.y = y;
+      g.checkInJunction();
+      g.updateRoute();
+    };
+    walk(cross.y - 10.5);
+    expect(said.at(-1)).toBe('Cross Elm Street, then turn right onto the path along Elm Street.');
+    const n = said.length;
+    walk(cross.y - 4); // stepping off the kerb into the intersection
+    walk(cross.y);
+    walk(cross.y + 3); // past the middle, still in the road: nothing more
+    expect(said.length).toBe(n);
+    walk(cross.y + 5.5); // up the far kerb
+    expect(said.slice(n)).toEqual(['Turn right onto the path along Elm Street.']);
+    walk(cross.y + 6);
+    expect(said.length).toBe(n + 1);
+  });
+
   it('says the kerb call earlier while walking, so it ends before you step off', () => {
     const { g, said } = route({ name: 'Far End', x: 0, y: 380 });
     const cross = g.route.maneuvers.find((m: { kind: string }) => m.kind === 'cross');
