@@ -335,7 +335,7 @@ async function startSignal(): Promise<boolean> {
   speech.say(
     `Experimental. ${where} Point the back camera at the crossing signal, a little upward, and hold it steady. ` +
       `A detector on this phone looks for walk and do not walk signals. It was trained on few photos, misses most distant signals, and can be wrong. ` +
-      `A slow low tone means do not walk. A short high trill means walk, maybe. Silence does not mean walk. Never cross on this alone: always listen to the traffic and check the street yourself.`,
+      `A slow low tone means do not walk. A short high trill means walk, maybe. Silence does not mean walk. This tool may not be reliable, and it is not a replacement for your mobility aids or orientation and mobility training.`,
     'high',
   );
   // loaded only now, so the app stays small for everyone else; about 25 MB the first time, then cached for offline use
