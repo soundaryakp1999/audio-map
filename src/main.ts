@@ -9,7 +9,7 @@ import { loadRecents } from './recents';
 import { geocode, type GeocodeResult } from './osm';
 import { addBackButtons, backClosesDialogs, goBack } from './back';
 import { UNMATCHED, byTierThenDistance, matchTier, mergeHits, type Hit } from './search';
-import { loadSettings, saveSettings, type Settings } from './settings';
+import { fmtDistance, loadSettings, saveSettings, type Settings } from './settings';
 import { initPreview, stopPreview } from './preview';
 import { startBackground, stopBackground } from './background';
 import type { ActionId } from './keymap';
@@ -26,6 +26,8 @@ import { postOsmNote } from './osmnotes';
 import { Phone, isPhone } from './phone';
 import { requestCompass } from './gps';
 import { requestMotion, startShake } from './shake';
+import { SignalWatcher } from './signal';
+import type { SignalModel } from './signalModel';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -307,6 +309,52 @@ function applyShake() {
 }
 const shakeLabel = () => `Shake for address: ${settings.shake ? 'on' : 'off'}`;
 const voiceLabel = () => (settings.speechMode === 'voice' ? 'Speech: built-in voice' : 'Speech: screen reader');
+let signal: SignalWatcher | null = null;
+let signalModel: SignalModel | null = null;
+// spoken once when the reading changes; the beeps carry on after it
+const SIGNAL_SPEECH = { walk: 'Walk signal detected.', dontWalk: "Don't walk signal detected.", unsure: 'Signal unclear.', none: 'Signal lost.' };
+function stopSignal() {
+  signal?.stop();
+  signal = null;
+  signalModel?.release();
+  signalModel = null;
+  $('ph-signal').setAttribute('aria-pressed', 'false');
+}
+/** Start the signal watch from a tap. It looks wherever the camera points: a crossing missing from the map, or GPS a few metres out, must not silence it. */
+async function startSignal(): Promise<boolean> {
+  const w = new SignalWatcher({ video: $('ph-signal-video') as HTMLVideoElement, onChange: (s) => speech.say(SIGNAL_SPEECH[s], 'high') });
+  try {
+    await w.start();
+  } catch {
+    w.stop();
+    speech.say('The camera could not be opened, so the signal watch is off. It can be allowed in the browser settings for this site.', 'high');
+    return false;
+  }
+  signal = w;
+  const d = game?.signalCrossingWithin(40) ?? null;
+  const where = d === null ? `No signal crossing is mapped within ${fmtDistance(40, settings.units)}, but it watches anyway.` : `Mapped signal crossing, ${fmtDistance(d, settings.units)}.`;
+  speech.say(
+    `Experimental. ${where} Point the back camera at the crossing signal, a little upward, and hold it steady. ` +
+      `A detector on this phone looks for walk and do not walk signals. It was trained on few photos, misses most distant signals, and can be wrong. ` +
+      `A slow low tone means do not walk. A short high trill means walk, maybe. Silence does not mean walk. This tool may not be reliable, and it is not a replacement for your mobility aids or orientation and mobility training.`,
+    'high',
+  );
+  // loaded only now, so the app stays small for everyone else; about 25 MB the first time, then cached for offline use
+  void import('./signalModel')
+    .then(({ SignalModel }) => SignalModel.load())
+    .then(
+      (m) => {
+        if (signal !== w) return m.release(); // switched off while loading
+        signalModel = m;
+        w.read = (v) => m.read(v);
+        speech.say('Signal detector ready.', 'normal');
+      },
+      () => {
+        if (signal === w) speech.say('The signal detector could not load on this phone, so the signal watch cannot read signals.', 'high');
+      },
+    );
+  return true;
+}
 const phone = new Phone($('phone'), () => game, {
   openSearch: () => openNav('navigate'),
   openMenu: () => openMenu('main'),
@@ -333,6 +381,12 @@ const phone = new Phone($('phone'), () => game, {
     applyShake();
     speech.say(settings.shake ? 'Shake the phone to hear where you are.' : 'Shake is off.', 'high');
     return shakeLabel();
+  },
+  toggleSignal: async () => {
+    if (!signal) return startSignal();
+    stopSignal();
+    speech.say('Crossing signal watch is off.', 'high');
+    return false;
   },
   guide: () => {
     if (!settings.turnByTurn || !settings.beaconSound) update({ turnByTurn: true, beaconSound: true });
@@ -378,6 +432,7 @@ function startPhone() {
 }
 
 function leavePhone() {
+  stopSignal();
   phone.hide();
   $('app').inert = false;
   void wakeLock?.release().catch(() => {});
@@ -433,6 +488,7 @@ function ensureGame(): Game {
   if (!game) {
     const audio = new AudioEngine(settings.volume, settings.soundTheme); // created on a user gesture so the browser allows sound
     game = new Game(settings, speech, audio, map);
+    game.signalHint = () => (phone.active && !signal ? 'The signal watch is off: tap Crossing signal watch to check the light.' : '');
     game.onMenu = openMenu;
     game.onNavigate = () => openNav('navigate');
     game.onJump = () => openNav('jump');
