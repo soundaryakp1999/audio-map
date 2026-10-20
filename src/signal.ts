@@ -1,5 +1,5 @@
-// Watches the rear camera for a pedestrian signal and sounds it: a slow low tone for Don't Walk, a short high trill
-// for Walk. The reading comes from an experimental detector on the phone (`signalModel.ts`); a state counts only
+// Watches the rear camera for a pedestrian signal and sounds it without stopping, so the phone need not be touched
+// while crossing: a short high trill for Walk, a slow low tone for Don't Walk, and a soft tick while no signal is read. The reading comes from an experimental detector on the phone (`signalModel.ts`); a state counts only
 // once it is read several times in a row, so one odd frame or a passing car does not flip the alert. Silence never
 // means walk.
 
@@ -26,9 +26,9 @@ export interface SignalOptions {
 
 /** The same reading this many times in a row before the state changes. */
 export const CONFIRM = 3;
-const GAP_MS = 150; // pause between readings, so the phone keeps up with everything else
-const WALK_EVERY_MS = 600;
-const DONT_WALK_EVERY_MS = 1200;
+const GAP_MS = 500; // rest between readings, so the phone stays cool and quick
+/** How each state sounds, and how often it repeats (ms). 'unsure' sounds like no signal: neither can be acted on. */
+const SOUND_EVERY_MS: Record<SignalState, number> = { walk: 600, dontWalk: 1200, unsure: 1500, none: 1500 };
 
 /** Counts readings in a row and says when a new state is confirmed. */
 export class Confirmer {
@@ -72,6 +72,7 @@ export class SignalWatcher {
     video.setAttribute('playsinline', '');
     await video.play();
     this.audio = new AudioContext();
+    this.sound('none'); // ticking from the start says it is on and looking
     this.next();
   }
 
@@ -80,8 +81,8 @@ export class SignalWatcher {
     clearTimeout(this.loop);
     this.loop = undefined;
     const stream = this.stream;
-    this.stream = null; // first, so switching off is not announced as a lost signal
-    this.show('none');
+    this.stream = null;
+    this.sound(null);
     stream?.getTracks().forEach((t) => t.stop());
     this.o.video.srcObject = null;
     void this.audio?.close();
@@ -101,21 +102,23 @@ export class SignalWatcher {
         }
         if (!this.stream) return;
         const changed = this.confirmer.add(seen);
-        if (changed) this.show(changed);
+        if (changed) {
+          this.sound(changed);
+          this.o.onChange?.(changed);
+        }
       }
       if (this.stream) this.next();
     }, GAP_MS);
   }
 
-  private show(next: SignalState): void {
+  /** Repeat the sound of `state` until the next change; null for silence. */
+  private sound(state: SignalState | null): void {
     clearInterval(this.alert);
     this.alert = undefined;
-    if (next === 'walk' || next === 'dontWalk') {
-      const sound = next === 'walk' ? () => this.trill() : () => this.tone(400, 0.25);
-      sound();
-      this.alert = setInterval(sound, next === 'walk' ? WALK_EVERY_MS : DONT_WALK_EVERY_MS);
-    }
-    if (this.stream) this.o.onChange?.(next);
+    if (!state) return;
+    const play = state === 'walk' ? () => this.trill() : state === 'dontWalk' ? () => this.tone(400, 0.25) : () => this.tone(900, 0.02, 0, 0.08);
+    play();
+    this.alert = setInterval(play, SOUND_EVERY_MS[state]);
   }
 
   /** Walk: a short high trill. Not a rising pair (that is the turn cue) and not the ticking of a real accessible signal. */
@@ -123,15 +126,15 @@ export class SignalWatcher {
     for (let i = 0; i < 6; i++) this.tone(i % 2 ? 1650 : 1250, 0.04, i * 0.05);
   }
 
-  /** Don't walk: one low, longer tone. */
-  private tone(hz: number, seconds: number, delay = 0): void {
+  /** One tone: don't walk is low and long, the no-signal tick short and quiet. */
+  private tone(hz: number, seconds: number, delay = 0, level = 0.3): void {
     const a = this.audio;
     if (!a) return;
     const at = a.currentTime + delay;
     const osc = a.createOscillator();
     const gain = a.createGain();
     osc.frequency.value = hz;
-    gain.gain.setValueAtTime(0.3, at);
+    gain.gain.setValueAtTime(level, at);
     gain.gain.exponentialRampToValueAtTime(0.001, at + seconds);
     osc.connect(gain).connect(a.destination);
     osc.start(at);
