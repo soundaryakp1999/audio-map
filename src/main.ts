@@ -331,6 +331,7 @@ async function startSignal(): Promise<boolean> {
     return false;
   }
   signal = w;
+  void keepAwake(); // iOS stops the camera when the screen locks, and nobody touches the phone while crossing
   const d = game?.signalCrossingWithin(40) ?? null;
   const style = styleWarning(game?.country ?? null);
   const where = d === null ? `No signal crossing is mapped within ${fmtDistance(40, settings.units)}, but it watches anyway.` : `Mapped signal crossing, ${fmtDistance(d, settings.units)}.`;
@@ -338,7 +339,7 @@ async function startSignal(): Promise<boolean> {
     `Experimental. ${where} Point the back camera at the crossing signal, a little upward, and hold it steady. ` +
       `A detector on this phone looks for walk and do not walk signals. It was trained on few photos, misses most distant signals, and can be wrong. ` +
       (style ? `${style} ` : '') +
-      `A slow low tone means do not walk. A short high trill means walk, maybe. Silence does not mean walk. This tool may not be reliable, and it is not a replacement for your mobility aids or orientation and mobility training.`,
+      `A short high trill means walk, maybe. A slow low tone means do not walk. A soft tick means no signal is seen. The screen stays on while it watches. This tool may not be reliable, and it is not a replacement for your mobility aids or orientation and mobility training.`,
     'high',
   );
   // loaded only now, so the app stays small for everyone else; about 25 MB the first time, then cached for offline use

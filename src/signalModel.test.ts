@@ -1,9 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-vi.mock('onnxruntime-web/wasm', () => ({}));
-vi.mock('onnxruntime-web/ort-wasm-simd-threaded.wasm?url', () => ({ default: '' }));
-vi.mock('./assets/signal-model.onnx?url', () => ({ default: '' }));
-const { INPUT, STOP_MIN, WALK_MIN, bestScores, cropOf, judge, toTensorData } = await import('./signalModel');
+import { INPUT, STOP_MIN, WALK_MIN, bestScores, cropOf, judge, toTensorData } from './signalModel';
 
 /** A raw output of `boxes` boxes, laid out [cx, cy, w, h, walk, dont_walk, countdown][box], with the given scores on box `at`. */
 function output(boxes: number, at: number, scores: [number, number, number]): Float32Array {

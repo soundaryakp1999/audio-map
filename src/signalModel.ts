@@ -3,14 +3,12 @@
 // walk at the thresholds below, but it misses most signals that are far away, and its test set was small. It is a
 // hint, not permission: silence never means walk.
 // ponytail: trained by tools/signal-detector/train_signal_detector.ipynb; real kerb-side photos are the next step.
-import * as ort from 'onnxruntime-web/wasm';
-import wasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url';
-import modelUrl from './assets/signal-model.onnx?url';
+// The model itself runs in signalWorker.ts, so the page stays responsive while it reads.
 import type { SignalState } from './signal';
 
 /** The model's square input, in pixels. */
 export const INPUT = 960;
-const CLASSES = 3; // walk, dont_walk, countdown
+export const CLASSES = 3; // walk, dont_walk, countdown
 /** A walk box needs this score; on the test photos no wrong walk scored this high. */
 export const WALK_MIN = 0.7;
 /** A don't-walk or countdown box needs this score. */
@@ -65,14 +63,30 @@ export function toTensorData(rgba: Uint8ClampedArray): Float32Array {
 }
 
 export class SignalModel {
-  private constructor(private readonly session: ort.InferenceSession) {}
   private readonly canvas = Object.assign(document.createElement('canvas'), { width: INPUT, height: INPUT });
+  private pending: ((s: Scores) => void) | null = null;
+
+  private constructor(private readonly worker: Worker) {
+    worker.onmessage = (e: MessageEvent<Scores>) => {
+      this.pending?.(e.data);
+      this.pending = null;
+    };
+  }
 
   /** Download (about 25 MB the first time, then cached for offline use) and prepare the model. Rejects if this browser cannot run it. */
-  static async load(): Promise<SignalModel> {
-    ort.env.wasm.wasmPaths = { wasm: wasmUrl };
-    ort.env.wasm.numThreads = 1; // threads need cross-origin isolation, which GitHub Pages cannot turn on
-    return new SignalModel(await ort.InferenceSession.create(modelUrl, { executionProviders: ['wasm'] }));
+  static load(): Promise<SignalModel> {
+    const worker = new Worker(new URL('./signalWorker.ts', import.meta.url), { type: 'module' });
+    return new Promise((resolve, reject) => {
+      worker.onerror = () => {
+        worker.terminate();
+        reject(new Error('signal worker failed'));
+      };
+      worker.onmessage = (e: MessageEvent<string>) => {
+        if (e.data === 'ready') return resolve(new SignalModel(worker));
+        worker.terminate();
+        reject(new Error('signal model failed to load'));
+      };
+    });
   }
 
   /** Look at the current camera frame and say what signal it shows. */
@@ -80,20 +94,22 @@ export class SignalModel {
     return judge(await this.scores(video));
   }
 
-  /** The best walk and stop scores in the middle of the current camera frame. */
-  async scores(video: HTMLVideoElement): Promise<Scores> {
+  /** The best walk and stop scores in the middle of the current camera frame. One reading at a time. */
+  scores(video: HTMLVideoElement): Promise<Scores> {
     const ctx = this.canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return { walk: 0, stop: 0 };
+    if (!ctx || this.pending) return Promise.resolve({ walk: 0, stop: 0 });
     const { sx, sy, side } = cropOf(video.videoWidth, video.videoHeight);
     ctx.drawImage(video, sx, sy, side, side, 0, 0, INPUT, INPUT);
-    const input = new ort.Tensor('float32', toTensorData(ctx.getImageData(0, 0, INPUT, INPUT).data), [1, 3, INPUT, INPUT]);
-    const out = (await this.session.run({ [this.session.inputNames[0]]: input }))[this.session.outputNames[0]];
-    const boxes = out.dims[2];
-    if (out.dims[1] !== 4 + CLASSES) throw new Error('unexpected model output');
-    return bestScores(out.data as Float32Array, boxes);
+    const pixels = ctx.getImageData(0, 0, INPUT, INPUT).data.buffer;
+    return new Promise((resolve) => {
+      this.pending = resolve;
+      this.worker.postMessage(pixels, [pixels]); // handed over, not copied
+    });
   }
 
   release(): void {
-    void this.session.release();
+    this.worker.terminate();
+    this.pending?.({ walk: 0, stop: 0 });
+    this.pending = null;
   }
 }
