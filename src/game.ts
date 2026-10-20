@@ -2166,7 +2166,7 @@ export class Game {
     }
     found.sort((a, b) => a.d - b.d);
     addCrossings(r, found);
-    this.nextMan = r.maneuvers.findIndex((m) => m.d >= this.routeProg - 3);
+    this.nextMan = r.maneuvers.findIndex((m) => this.doneAt(m) >= this.routeProg);
     if (this.nextMan < 0) this.nextMan = r.maneuvers.length;
   }
 
@@ -2274,6 +2274,23 @@ export class Game {
     return text + then;
   }
 
+  /**
+   * Route distance past which manoeuvre m is behind you: a few metres past a turn, and the far kerb
+   * of a crossing, so what comes next is said on the far side, not in the road.
+   */
+  private doneAt(m: Maneuver): number {
+    return m.d + (m.kind === 'cross' ? Math.max(3, m.kerb ?? 0) : 3);
+  }
+
+  /** Are we inside the intersection where turn m is? */
+  private inJunctionOf(m: Maneuver): boolean {
+    const w = this.world!;
+    return [...(this.inJunction ?? [])].some((id) => {
+      const n = w.nodes.get(id);
+      return !!n && dist(n.x, n.y, m.x, m.y) <= 10;
+    });
+  }
+
   /** Is the next turn on the route within d metres? */
   private routeTurnWithin(d: number): boolean {
     const m = this.upcoming();
@@ -2336,7 +2353,7 @@ export class Game {
 
     const th = this.stepThresholds;
     // manoeuvres we have passed
-    while (this.nextMan < r.maneuvers.length && r.maneuvers[this.nextMan].d < this.routeProg - 3) {
+    while (this.nextMan < r.maneuvers.length && this.doneAt(r.maneuvers[this.nextMan]) < this.routeProg) {
       const passed = r.maneuvers[this.nextMan++];
       if (this.isTrivial(passed)) continue; // stepping onto the sidewalk: nothing to say
       this.spokenSteps.clear();
@@ -2365,8 +2382,9 @@ export class Game {
     for (let k = 2; k >= 0; k--) {
       if (d > at[k] || this.spokenSteps.has(k)) continue;
       // a turn at an intersection is called when you are in that intersection (checkInJunction),
-      // not by distance, which could fall on a side street just before it
-      if (k === 2 && atJunction) continue;
+      // not by distance, which could fall on a side street just before it; but one on the far
+      // corner of a crossing is reached before the crossing is done, so it is called from here
+      if (k === 2 && atJunction && !this.inJunctionOf(m)) continue;
       // a crossing is said on the approach and again at the kerb, with what follows it
       if (m.kind === 'cross' && k === 0) continue;
       if (k < 2 && d <= at[k + 1] * 1.4) continue; // the closer reminder is coming up anyway
@@ -2960,7 +2978,7 @@ export class Game {
         this.routeProg = a.d + h.t * (b.d - a.d);
       }
     }
-    this.nextMan = r.maneuvers.findIndex((m) => m.d >= this.routeProg - 3);
+    this.nextMan = r.maneuvers.findIndex((m) => this.doneAt(m) >= this.routeProg);
     if (this.nextMan < 0) this.nextMan = r.maneuvers.length;
     this.spokenSteps.clear();
     this.offRouteSince = -1;
