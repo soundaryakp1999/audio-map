@@ -19,7 +19,13 @@ export interface Estimate {
   y: number;
   acc: number;
   t: number;
+  /** velocity east and north (m/s) from the last fix's speed and course; 0 when either is unknown */
+  vx: number;
+  vy: number;
 }
+
+/** Between fixes, the position is carried on at the last speed and course for at most this long (s). */
+const MAX_COAST = 2;
 
 /** Fixes worse than this are ignored once a good one has arrived. */
 export const POOR_ACCURACY = 100;
@@ -93,17 +99,30 @@ export function motionBase<T extends { t: number }>(track: T[], now: number): T 
 
 /**
  * Blend a new fix into the estimate, weighting each by its accuracy: a poor fix moves us little, a good one a lot.
- * The estimate's own uncertainty grows with the time since the last fix and the speed we may have covered.
+ * The estimate is first carried forward at its speed and course: left where it was, it would trail a
+ * walker by metres (about the fix accuracy at walking pace), and every turn and crossing would be
+ * called late. Its uncertainty grows with the time since the last fix and the speed we may have covered.
  */
-export function fuse(prev: Estimate | null, x: number, y: number, acc: number, t: number, speed: number): Estimate {
+export function fuse(prev: Estimate | null, x: number, y: number, acc: number, t: number, speed: number, course: number | null = null): Estimate {
   // a NaN position, speed or a zero accuracy would poison every later estimate
-  if (!Number.isFinite(x + y)) return prev ?? { x: 0, y: 0, acc: 1000, t };
+  if (!Number.isFinite(x + y)) return prev ?? { x: 0, y: 0, acc: 1000, t, vx: 0, vy: 0 };
   acc = Math.max(acc, 1);
-  if (!prev) return { x, y, acc, t };
-  const reach = Math.max(Number.isFinite(speed) ? speed : 0, 1) * Math.max(0, t - prev.t);
+  speed = Number.isFinite(speed) ? Math.max(0, speed) : 0;
+  const rad = ((course ?? 0) * Math.PI) / 180;
+  const v = course !== null && Number.isFinite(course) ? { vx: speed * Math.sin(rad), vy: speed * Math.cos(rad) } : { vx: 0, vy: 0 };
+  if (!prev) return { x, y, acc, t, ...v };
+  const dt = Math.max(0, t - prev.t);
+  const p = coast(prev, t);
+  const reach = Math.max(speed, 1) * dt;
   const pv = prev.acc ** 2 + reach ** 2;
   const k = pv / (pv + acc ** 2);
-  return { x: prev.x + (x - prev.x) * k, y: prev.y + (y - prev.y) * k, acc: Math.sqrt((1 - k) * pv), t };
+  return { x: p.x + (x - p.x) * k, y: p.y + (y - p.y) * k, acc: Math.sqrt((1 - k) * pv), t, ...v };
+}
+
+/** Where the estimate puts us at time t (s): carried on at its speed and course, for at most MAX_COAST seconds. */
+export function coast(e: Estimate, t: number): { x: number; y: number } {
+  const dt = Math.min(MAX_COAST, Math.max(0, t - e.t));
+  return { x: e.x + e.vx * dt, y: e.y + e.vy * dt };
 }
 
 /** Search radius for snapping to a road, or 0 when the position is too uncertain to snap. */

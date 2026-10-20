@@ -400,6 +400,19 @@ describe('turn-by-turn', () => {
     expect(said.length).toBe(n + 1);
   });
 
+  it('says the kerb call earlier while walking, so it ends before you step off', () => {
+    const { g, said } = route({ name: 'Far End', x: 0, y: 380 });
+    const cross = g.route.maneuvers.find((m: { kind: string }) => m.kind === 'cross');
+    g.speed = 1.4;
+    g.y = cross.y - 24;
+    g.updateRoute();
+    const n = said.length;
+    g.y = cross.y - 10.5; // 5.5 m before the kerb: 5 m half width + 3 m + two seconds at 1.4 m/s
+    g.updateRoute();
+    expect(said.length).toBe(n + 1);
+    expect(said.at(-1)).toBe('Cross Elm Street.');
+  });
+
   it('does not count turning onto a street as crossing it', () => {
     const { g } = route({ name: 'East End', x: 190, y: 200 });
     expect(g.route.maneuvers.some((m: { kind: string }) => m.kind === 'cross')).toBe(false);
