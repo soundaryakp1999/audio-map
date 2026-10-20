@@ -30,6 +30,10 @@ import { byTierThenDistance, matchTier } from './search';
 import { MINOR, TRANSIT, World, type Edge, type GNode, type Junction, type Place, type PlaceGroup, type RoadHit, type Way } from './world';
 
 const STEP = 1 / 60;
+/** No animation frame for this long (ms) means the screen is off or the page hidden. */
+const IDLE_AFTER = 400;
+/** Seconds before a phone tries a failed first map load again. */
+const LOAD_RETRY = 20;
 /** seconds off the ring before the roundabout counts as left */
 const RING_EXIT_DELAY = 0.5;
 export function minutesText(minutes: number): string {
@@ -168,8 +172,15 @@ export class Game {
   private loadCenter = { x: 0, y: 0 };
   private loading = false;
   private nextLoadTry = 0;
+  /** the first map of a start failed to load (cleared when it is tried again) */
+  private loadFailed = false;
+  private loadRetry: ReturnType<typeof setTimeout> | undefined;
   private loadAbort: AbortController | null = null;
   private areaName = '';
+  /** streets around a spot the phone's explore map was panned to, beyond the map loaded around you */
+  private far: { x: number; y: number; world: World | null; abort: AbortController } | null = null;
+  /** bumped whenever a map arrives, so the phone's touch map is described afresh */
+  private mapVersion = 0;
 
   private x = 0;
   private y = 0;
@@ -320,6 +331,9 @@ export class Game {
     const liveOff = !this.restartingForGps && !!this.live;
     if (!this.restartingForGps) this.stopLive();
     this.loadAbort?.abort();
+    clearTimeout(this.loadRetry);
+    this.far?.abort.abort();
+    this.far = null;
     this.proj = new Projection(center);
     this.loadNotes();
     this.x = 0;
@@ -354,20 +368,44 @@ export class Game {
       this.running = true;
       this.lastFrame = performance.now();
       requestAnimationFrame(this.frame);
+      setInterval(this.idle, 500);
     }
 
     this.speech.say(`${liveOff ? 'Live GPS off. ' : ''}Loading map data${placeName ? ` for ${placeName}` : ''}. Please wait.`, 'high');
     void this.autoUnits(center);
+    await this.firstLoad();
+  }
+
+  /**
+   * Load the map for a fresh start, then put the traveller on the nearest road. On a phone, where
+   * there is no Escape to start again, a failed load tries again by itself until it works.
+   */
+  private async firstLoad() {
+    const proj = this.proj;
+    this.loadFailed = false;
     const stopHeartbeat = this.loadingHeartbeat();
     const ok = await this.load(true);
     stopHeartbeat();
     const world = this.world as World | null; // assigned during load()
-    if (!ok || !world) return;
+    if (!ok || !world) {
+      if (this.touch && this.loadFailed && this.proj === proj) {
+        this.loadRetry = setTimeout(() => {
+          if (this.proj !== proj || this.world) return; // started somewhere else meanwhile
+          // live GPS may have moved you while the map was missing
+          if (this.liveFix && this.gpsEst) {
+            this.x = this.gpsEst.x;
+            this.y = this.gpsEst.y;
+          }
+          void this.firstLoad();
+        }, LOAD_RETRY * 1000);
+      }
+      return;
+    }
 
     // put the traveller on the nearest suitable road, facing along it
     if (this.vehicle.id !== 'helicopter') {
       const hit =
-        world.nearestRoad(0, 0, 400, this.filter) ?? world.nearestRoad(0, 0, 400);
+        world.nearestRoad(this.x, this.y, 400, this.filter) ?? world.nearestRoad(this.x, this.y, 400);
       if (hit) {
         this.x = hit.hit.px;
         this.y = hit.hit.py;
@@ -480,7 +518,10 @@ export class Game {
       }
 
       if (this.world) this.swapWorld(world);
-      else this.world = world;
+      else {
+        this.world = world;
+        this.mapVersion++;
+      }
       installed = true;
       if (this.dest && !this.grid && this.settings.turnByTurn && (!this.route || this.route.partial) && this.clock - this.lastRouteCalc > 10) void this.computeRoute(false);
       this.loadCenter = at;
@@ -500,10 +541,13 @@ export class Game {
       if (abort.signal.aborted) return false;
       console.error(e);
       this.audio.error();
+      if (initial) this.loadFailed = true;
       this.speech.say(
-        initial
-          ? 'Could not load map data. The map servers may be busy. Press Escape, then Start to try again.'
-          : 'Could not load more map data. Will retry shortly.',
+        !initial
+          ? 'Could not load more map data. Will retry shortly.'
+          : this.touch
+            ? `Could not load map data. The map servers may be busy, or there is no connection. Trying again in ${LOAD_RETRY} seconds.`
+            : 'Could not load map data. The map servers may be busy. Press Escape, then Start to try again.',
         'high',
       );
       this.nextLoadTry = this.clock + 20;
@@ -560,6 +604,7 @@ export class Game {
       this.inJunction = seed ? new Set(next.junction(seed, this.filter, this.junctionRadius).nodes.map((m) => m.id)) : null;
     }
     this.world = next;
+    this.mapVersion++;
     this.markCrossings(); // streets newly loaded along the route may be crossed
     this.ring = null; // picked up again from the new map, if we are in one
     this.ahead = null;
@@ -577,6 +622,8 @@ export class Game {
   run(key: string, mods: { shift?: boolean; ctrl?: boolean } = {}) {
     const code = /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : /^\d$/.test(key) ? `Digit${key}` : key;
     this.command({ key, code, shift: !!mods.shift, ctrl: !!mods.ctrl, alt: false, repeat: false });
+    // a swipe or spoken "turn left" is a press and release in one: say the new heading as letting go of the key does
+    if (code === 'ArrowLeft' || code === 'ArrowRight') this.keyUp(code);
   }
 
   /** The key currently bound to an action, as spoken. */
@@ -648,7 +695,32 @@ export class Game {
 
   private frame = (t: number) => {
     requestAnimationFrame(this.frame);
-    const dt = Math.max(0, Math.min(0.25, (t - this.lastFrame) / 1000)); // resume() can stamp a time later than this frame's
+    this.advance(t, 0.25);
+    if (this.paused || !this.world) return;
+    if (t > this.nextMap) {
+      this.nextMap = t + 33;
+      this.map.update(this.proj.toLatLon(this.x, this.y), this.heading, this.speed);
+    }
+    if (t > this.nextHud) {
+      this.nextHud = t + 200;
+      this.emitHud();
+    }
+  };
+
+  /**
+   * With the screen off the browser runs no animation frames, but a walk under live GPS goes on, and
+   * its turns, crossings, beacon and arrival with it. While frames have stopped, this timer keeps
+   * time instead. A hidden page gets timers about once a second, so it may cover a longer gap.
+   */
+  private idle = () => {
+    const t = performance.now();
+    if (!(this.live && this.liveFix) || t - this.lastFrame < IDLE_AFTER) return;
+    this.advance(t, 2);
+  };
+
+  /** Run the simulation up to time t (ms), at most maxDt seconds of it. */
+  private advance(t: number, maxDt: number) {
+    const dt = Math.max(0, Math.min(maxDt, (t - this.lastFrame) / 1000)); // resume() can stamp a time later than this frame's
     this.lastFrame = t;
     if (this.paused || !this.world) return;
     this.acc += dt;
@@ -668,15 +740,7 @@ export class Game {
       },
       dt,
     );
-    if (t > this.nextMap) {
-      this.nextMap = t + 33;
-      this.map.update(this.proj.toLatLon(this.x, this.y), this.heading, this.speed);
-    }
-    if (t > this.nextHud) {
-      this.nextHud = t + 200;
-      this.emitHud();
-    }
-  };
+  }
 
   private step(dt: number) {
     this.clock += dt;
@@ -3304,8 +3368,8 @@ export class Game {
   }
 
   /** The road or path at (x, y), by default where the traveller stands, if any. */
-  private gridRoad(x = this.x, y = this.y): Area | null {
-    const hit = this.world?.nearestRoad(x, y, 30);
+  private gridRoad(x = this.x, y = this.y, world = this.world): Area | null {
+    const hit = world?.nearestRoad(x, y, 30);
     if (!hit || hit.hit.dist > roadHalfWidth(hit.seg.way.type) + 1.5) return null;
     const w = hit.seg.way;
     return { key: `road:${w.name}`, kind: w.name, sound: MINOR.has(w.type) ? 'path' : 'road' };
@@ -3360,7 +3424,7 @@ export class Game {
   }
 
   /** Give a tile area its best name: OpenStreetMap's own, else a house number; and the phrase to say. */
-  private nameArea(area: Area, onRoad: boolean, x: number, y: number): { area: Area; text: string } {
+  private nameArea(area: Area, onRoad: boolean, x: number, y: number, world = this.world): { area: Area; text: string } {
     let text = '';
     if (!onRoad) {
       // the tiles' building and ground outlines carry no names: OpenStreetMap's own, when loaded
@@ -3368,7 +3432,7 @@ export class Game {
       // a named compound where the tiles have no ground at all is its "grounds", not "open ground"
       if (osm) area = { ...area, name: osm.name, kind: osm.kind ?? (area.sound === 'open' ? 'grounds' : area.kind), number: undefined };
       if (!area.name && area.number) {
-        const st = this.world?.nearestRoad(x, y, 30, (w) => w.named && !MINOR.has(w.type));
+        const st = world?.nearestRoad(x, y, 30, (w) => w.named && !MINOR.has(w.type));
         text = `${area.kind} number ${area.number}${st ? ` on ${st.seg.way.name}` : ''}`;
       }
     }
@@ -3379,14 +3443,21 @@ export class Game {
 
   /** Where the traveller is and faces, for the phone screen. */
   get pose() {
-    return { x: this.x, y: this.y, heading: this.heading, live: !!this.live, ready: !!this.world, units: this.settings.units };
+    return { x: this.x, y: this.y, heading: this.heading, live: !!this.live, ready: !!this.world, loadFailed: this.loadFailed, mapVersion: this.mapVersion, units: this.settings.units };
   }
 
-  /** What is at (x, y): road, named building or ground, as a short phrase with its sound. Null before the map loads. */
+  /** Back from the lock screen or another app, where iOS may have interrupted the sound. */
+  wakeAudio() {
+    if (this.running && !this.paused) this.audio.resume();
+  }
+
+  /** What is at (x, y): road, named building or ground, as a short phrase with its sound. Null before its map loads. */
   async describeAt(x: number, y: number): Promise<{ text: string; sound: AreaSound; named: boolean } | null> {
     if (!this.world) return null;
     this.loadNamed();
-    let area = this.gridRoad(x, y);
+    const roads = this.roadsAt(x, y);
+    if (!roads) return null; // without its streets, a street there would read as open ground
+    let area = this.gridRoad(x, y, roads);
     const onRoad = !!area;
     if (!area) {
       try {
@@ -3395,8 +3466,35 @@ export class Game {
         return null;
       }
     }
-    const named = this.nameArea(area, onRoad, x, y);
+    const named = this.nameArea(area, onRoad, x, y, roads);
     return { text: named.text, sound: named.area.sound, named: onRoad || !!named.area.name || !!named.area.number };
+  }
+
+  /**
+   * The streets covering (x, y): the map around you, or else one loaded around that spot, since the
+   * phone's explore map can be panned far beyond yours. Null while that one loads; mapVersion then
+   * changes when it arrives.
+   */
+  private roadsAt(x: number, y: number): World | null {
+    if (this.inLoadedArea(x, y)) return this.world;
+    const r = this.vehicle.loadRadius * 0.85;
+    const f = this.far;
+    if (f && Math.abs(x - f.x) < r && Math.abs(y - f.y) < r) return f.world;
+    f?.abort.abort();
+    const proj = this.proj;
+    const far = { x, y, world: null as World | null, abort: new AbortController() };
+    this.far = far;
+    fetchTileArea(proj.toLatLon(x, y), this.vehicle.loadRadius, far.abort.signal).then(
+      (t) => {
+        if (this.far !== far || this.proj !== proj) return;
+        far.world = new World(proj, t.roads);
+        this.mapVersion++;
+      },
+      () => {
+        if (this.far === far) this.far = null; // tried again on the next look there
+      },
+    );
+    return null;
   }
 
   /** The neighbourhood (x, y) is near, if any. */
@@ -3480,6 +3578,26 @@ export class Game {
     const m = steps[0];
     if (!m) return r.partial ? 'Follow this road; more of the route loads as you go.' : `Arriving at ${dest.name}.`;
     return `${this.stepWhen(m, m.d - this.routeProg)}.`;
+  }
+
+  /**
+   * The next steps of the route, up to max, for the phone's list: the first from here ("In 40
+   * metres, turn right onto Elm Street"), each after it from the step before ("After 120 metres
+   * more, turn left onto Oak Street"). It ends at the destination when that comes first.
+   */
+  routeSteps(max = 5): string[] {
+    const r = this.route;
+    const dest = this.dest;
+    if (!r || !dest) return [];
+    const steps = r.maneuvers.slice(this.nextMan).filter((m) => !(m.kind === 'arrive' && r.partial) && !this.isTrivial(m)).slice(0, max);
+    const out: string[] = [];
+    let at = this.routeProg;
+    for (const m of steps) {
+      out.push(out.length ? `After ${fmtDistance(m.d - at, this.settings.units)} more, ${this.stepText(m, dest.name)}.` : `${this.stepWhen(m, m.d - at)}.`);
+      at = m.d;
+    }
+    if (r.partial && out.length < max) out.push('The route goes on as more of the map loads.');
+    return out;
   }
 
   /**

@@ -382,10 +382,14 @@ async function keepAwake() {
     wakeLock = null; // not allowed (battery saver, or not supported): the screen may lock
   }
 }
-// the browser drops the lock when the page is hidden; take it again on return
+// the browser drops the lock when the page is hidden; take it again on return. iOS can also leave
+// the sound interrupted after the lock screen, so it is resumed then and on the next tap
 document.addEventListener('visibilitychange', () => {
-  if (wakeLock && document.visibilityState === 'visible' && phone.active) void keepAwake();
+  if (document.visibilityState !== 'visible' || !phone.active) return;
+  if (wakeLock) void keepAwake();
+  game?.wakeAudio();
 });
+$('phone').addEventListener('pointerdown', () => game?.wakeAudio());
 
 let stopShake: (() => void) | null = null;
 /** Listen for shakes only while the phone screen is up and the player has asked for it. */
@@ -987,6 +991,14 @@ if (!shared && prefersPhone()) {
 
 // the dev server must not serve stale files from a worker
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  // opened on a weak signal, the saved app came up; once the new one is in, switch to it, but only
+  // on the home screen: never mid-walk, and not over a search being typed
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if ((e.data as { type?: string } | null)?.type !== 'updated' || game) return;
+    const el = document.activeElement;
+    if (el instanceof HTMLInputElement && el.value) return;
+    location.reload();
+  });
   void navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 
@@ -997,11 +1009,14 @@ for (const b of document.querySelectorAll<HTMLButtonElement>('dialog [data-cance
 // Back at the top of each dialog, so it is the first thing a screen reader finds; the menu has Resume
 addBackButtons(document, ['menu', 'osmnote']); // the map error report has its own Back between steps
 backClosesDialogs(document);
-// Shaken while typed text can still be undone, as when walking with the phone in a pocket, iOS
-// offers "Undo Typing". Setting the text from code ends that undo history, so typed search and
-// note boxes are emptied when their dialog closes. Saved places keeps its names, which it fills in.
-for (const dlg of document.querySelectorAll<HTMLDialogElement>('dialog:not(#saved)')) {
-  dlg.addEventListener('close', () => {
-    for (const i of dlg.querySelectorAll<HTMLInputElement>('input[type=search], input[type=text]')) i.value = '';
-  });
+// Shaken while typed text can still be undone, as when walking with the phone in a pocket after
+// typing a destination, iOS offers "Undo Typing". Setting the text from code leaves that history,
+// but WebKit drops the page's whole undo history whenever a frame is unloaded, so a blank frame is
+// added and removed straight away each time a dialog closes.
+function forgetTyping() {
+  const f = document.createElement('iframe');
+  f.hidden = true;
+  document.body.appendChild(f);
+  f.remove();
 }
+for (const dlg of document.querySelectorAll<HTMLDialogElement>('dialog')) dlg.addEventListener('close', forgetTyping);

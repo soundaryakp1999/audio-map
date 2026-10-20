@@ -85,6 +85,14 @@ describe('commands', () => {
     expect(said.at(-1)).toBe('No destination. Press Control K to choose one.');
   });
 
+  it('says the new heading after a turn by swipe or voice, as releasing the key does', () => {
+    const { game, said } = setup();
+    game.run('ArrowRight', { shift: true });
+    expect(said.at(-1)).toBe('10, north');
+    game.run('ArrowLeft', { ctrl: true }); // onto the next road says where it turned you itself
+    expect(said.at(-1)).not.toMatch(/^\d+, /);
+  });
+
   it('H reports compass heading', () => {
     const { game, said, g } = setup();
     g.heading = 90;
@@ -491,6 +499,68 @@ describe('start / load', () => {
     expect(said.at(-1)).toMatch(/^Could not load map data/);
     expect(g.nextLoadTry).toBeGreaterThan(g.clock);
     game.pause();
+  });
+
+  it('on a phone, tries a failed first load again by itself until the map arrives', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.mocked(fetchRoads).mockRejectedValue(new Error('busy'));
+      const { game, g, said } = setup();
+      g.world = null;
+      game.touch = true;
+      await game.start({ lat: 51, lon: 0 });
+      expect(said.at(-1)).toBe('Could not load map data. The map servers may be busy, or there is no connection. Trying again in 20 seconds.');
+      expect(game.pose.loadFailed).toBe(true);
+      await vi.advanceTimersByTimeAsync(20_000); // and fails again
+      expect(said.filter((t) => t.startsWith('Could not load map data'))).toHaveLength(2);
+      vi.mocked(fetchRoads).mockImplementation(async () => rawRoads());
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(game.pose.loadFailed).toBe(false);
+      expect(game.pose.ready).toBe(true);
+      expect(g.streetName).toBe('Oak Street');
+      expect(said.at(-1)).toMatch(/^Ready\. /);
+      game.pause();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops trying again once started somewhere else', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.mocked(fetchRoads).mockRejectedValue(new Error('busy'));
+      const { game, g } = setup();
+      g.world = null;
+      game.touch = true;
+      await game.start({ lat: 51, lon: 0 });
+      await game.start({ lat: 52, lon: 0 });
+      vi.mocked(fetchRoads).mockClear();
+      await vi.advanceTimersByTimeAsync(20_000); // only the newer start's retry
+      expect(fetchRoads).toHaveBeenCalledTimes(1);
+      game.pause();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('with a keyboard, leaves trying again to the player', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.mocked(fetchRoads).mockRejectedValue(new Error('busy'));
+      const { game, g, said } = setup();
+      g.world = null;
+      await game.start({ lat: 51, lon: 0 });
+      expect(said.at(-1)).toMatch(/Press Escape, then Start to try again\.$/);
+      vi.mocked(fetchRoads).mockClear();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fetchRoads).not.toHaveBeenCalled();
+      game.pause();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('says so when the area has no roads', async () => {
@@ -1019,12 +1089,39 @@ describe('phone screen', () => {
     expect(await game.hoodAt(20, 100)).toBe('Kala Ghoda');
   });
 
+  it('loads the streets around a spot the explore map is panned to, beyond the map around you', async () => {
+    const { game, g } = setup();
+    g.areas = { at: vi.fn(async () => ({ key: 'open', sound: 'open', kind: 'open ground' })), hood: vi.fn(async () => null) };
+    const far: RawRoads = { nodes: new Map([[21, ll(-100, 3000)], [22, ll(100, 3000)]]), ways: [{ id: 30, nodes: [21, 22], tags: { highway: 'residential', name: 'Far Road' } }] };
+    vi.mocked(fetchTileArea).mockResolvedValue({ roads: far, places: { places: [], signals: new Set() } });
+    const version = game.pose.mapVersion;
+    expect(await game.describeAt(0, 3000)).toBeNull(); // not "open ground": its streets are not loaded yet
+    await flush();
+    expect(game.pose.mapVersion).toBe(version + 1); // the phone describes its squares again
+    expect(await game.describeAt(0, 3000)).toEqual({ text: 'Far Road', sound: 'road', named: true });
+    expect(await game.describeAt(20, 3010)).toMatchObject({ text: 'open ground' });
+    expect(fetchTileArea).toHaveBeenCalledTimes(1);
+    expect(await game.describeAt(0, 100)).toMatchObject({ text: 'Oak Street' }); // near you: your own map
+  });
+
   it('gives the next instruction as text for the directions panel', async () => {
     const { game } = setup();
     expect(game.directionsText()).toBe('');
     game.setTarget({ name: 'Elm End', x: 150, y: 200 });
     await flush();
     expect(game.directionsText()).toMatch(/^In 150 metres, .*turn right onto Elm Street\.$/);
+  });
+
+  it('lists the next turns for the phone, each after the one before, ending at the destination', async () => {
+    const { game } = setup();
+    expect(game.routeSteps()).toEqual([]);
+    game.setTarget({ name: 'Elm End', x: 150, y: 200 });
+    await flush();
+    const steps = game.routeSteps(5);
+    expect(steps[0]).toMatch(/^In 150 metres, .*turn right onto Elm Street\.$/);
+    expect(steps.at(-1)).toMatch(/^After \d+ metres more, arrive at Elm End\.$/);
+    expect(steps).toHaveLength(2);
+    expect(game.routeSteps(1)).toHaveLength(1);
   });
 
   it('says "now" instead of a distance once closer than GPS can tell', async () => {
@@ -1285,6 +1382,36 @@ describe('live GPS walking', () => {
     for (let i = 0; i < 60; i++) g.followGps(1 / 60);
     expect(Math.abs(((g.heading + 180) % 360) - 180)).toBeLessThan(5);
     expect(g.speed).toBeCloseTo(1.3);
+  });
+
+  it('keeps guiding with the screen off, when the browser has stopped animation frames', () => {
+    const { game, g, said } = setup();
+    game.setTarget({ name: 'Blue Cafe', x: 0, y: 70 });
+    g.live = { compass: null, stop() {} };
+    g.liveFix = { lat: 0, lon: 0, speed: 1.3, heading: 0, accuracy: 5 };
+    g.gpsEst = { x: 0, y: 70, acc: 5, t: 0 }; // walked up to the cafe while the screen was off
+    g.lastFrame = performance.now() - 1000;
+    const clock = g.clock;
+    g.idle();
+    expect(g.clock - clock).toBeCloseTo(1, 1);
+    expect(said.some((t) => t.startsWith('Arrived at Blue Cafe.'))).toBe(true);
+    expect(g.dest).toBeNull();
+  });
+
+  it('leaves the timer idle while frames run, and without live GPS', () => {
+    const { g } = setup();
+    g.lastFrame = performance.now();
+    g.live = { compass: null, stop() {} };
+    g.liveFix = { lat: 0, lon: 0, speed: 1.3, heading: 0, accuracy: 5 };
+    g.gpsEst = { x: 0, y: 60, acc: 5, t: 0 };
+    g.idle(); // a frame has just run
+    expect(g.clock).toBe(0);
+    // keyboard travel stops in a hidden tab as before: nothing really moves you
+    g.live = null;
+    g.liveFix = null;
+    g.lastFrame = performance.now() - 1000;
+    g.idle();
+    expect(g.clock).toBe(0);
   });
 
   it('uses the compass when standing still', () => {

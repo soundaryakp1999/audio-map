@@ -15,13 +15,15 @@ const MID = (N - 1) / 2;
 export const SQUARES = [10, 20, 50];
 
 export interface PhoneGame {
-  readonly pose: { x: number; y: number; heading: number; live: boolean; ready: boolean; units: Units };
+  readonly pose: { x: number; y: number; heading: number; live: boolean; ready: boolean; loadFailed: boolean; mapVersion: number; units: Units };
   readonly hasDestination: boolean;
   describeAt(x: number, y: number): Promise<{ text: string; sound: AreaSound; named: boolean } | null>;
   hoodAt(x: number, y: number): Promise<string | null>;
   areaCue(sound: AreaSound): void;
   streetUp(heading: number): { dir: number; street?: string };
   directionsText(): string;
+  /** the next few steps of the route, nearest first */
+  routeSteps(max?: number): string[];
   announce(text: string): void;
   setTarget(t: { name: string; x: number; y: number }): void;
   nearbyList(group: PlaceGroup | null): { id: string; text: string }[];
@@ -60,13 +62,15 @@ const NEAR_KINDS: [PlaceGroup | null, string][] = [
   ['service', 'Services'],
 ];
 
-const MAP_KEY = 'audio-map-phone-map';
+// a new key: the first one stored "shown" on every visit, so a hidden default would never take hold
+const MAP_KEY = 'audio-map-phone-map-v2';
 
+/** Whether the touch map is wanted in travel mode: hidden unless Show map was chosen. */
 function loadMapShown(): boolean {
   try {
-    return localStorage.getItem(MAP_KEY) !== 'hidden';
+    return localStorage.getItem(MAP_KEY) === 'shown';
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -84,6 +88,16 @@ export function cellPoint(cx: number, cy: number, up: number, size: number, row:
   const ahead = (MID - row) * size;
   const r = (up * Math.PI) / 180;
   return { x: cx + right * Math.cos(r) + ahead * Math.sin(r), y: cy - right * Math.sin(r) + ahead * Math.cos(r) };
+}
+
+/** The square (row * N + col) holding point (x, y) on a map drawn by cellPoint; -1 when it is off the map. */
+export function cellOf(cx: number, cy: number, up: number, size: number, x: number, y: number): number {
+  const r = (up * Math.PI) / 180;
+  const dx = x - cx;
+  const dy = y - cy;
+  const col = Math.round((dx * Math.cos(r) - dy * Math.sin(r)) / size + MID);
+  const row = Math.round(MID - (dx * Math.sin(r) + dy * Math.cos(r)) / size);
+  return row < 0 || row >= N || col < 0 || col >= N ? -1 : row * N + col + 0; // + 0: rounding just below zero gives -0
 }
 
 /** "40 metres ahead, 20 metres right" (travel) or "40 metres north, 20 metres east" (explore); '' for the centre. */
@@ -130,13 +144,16 @@ export class Phone {
   private sizeIdx = 1;
   private centre: { x: number; y: number } | null = null;
   private up: UpState | null = null;
-  private frame: { cx: number; cy: number; up: number; size: number; units: Units; mode: string } | null = null;
+  private frame: { cx: number; cy: number; up: number; size: number; units: Units; mode: string; ver: number } | null = null;
   private cells: (Cell | null)[] = [];
   private buttons: HTMLButtonElement[] = [];
-  private selected = -1;
+  /** the square last double tapped; kept when the map moves on, so Set as destination still means it */
+  private chosen: Cell | null = null;
   private seq = 0;
   private timer: ReturnType<typeof setInterval> | undefined;
   private touching = false;
+  /** the square marked as where you are, or -1 */
+  private meIdx = -1;
   private lastHover = -1;
   private started = false;
 
@@ -167,8 +184,9 @@ export class Phone {
       this.touching = false;
       this.lastHover = -1;
     };
-    grid.addEventListener('pointerup', lift);
-    grid.addEventListener('pointercancel', lift);
+    // on the whole page: a mouse let go outside the map would otherwise leave every later move over it spoken
+    document.addEventListener('pointerup', lift);
+    document.addEventListener('pointercancel', lift);
 
     this.el('ph-dirs').addEventListener('click', () => this.game((g) => g.announce(this.el('ph-dirs').textContent ?? '')));
     this.el('ph-where').addEventListener('click', () => this.hooks.openSearch());
@@ -219,8 +237,20 @@ export class Phone {
     this.el('ph-voice').addEventListener('click', () => (this.el('ph-voice').textContent = this.hooks.toggleVoice()));
     this.el('ph-menu').addEventListener('click', () => this.hooks.openMenu());
     this.el('ph-map').addEventListener('click', () => {
-      this.showMap(!this.mapShown);
+      this.mapShown = !this.mapShown;
+      try {
+        localStorage.setItem(MAP_KEY, this.mapShown ? 'shown' : 'hidden');
+      } catch {
+        // ignore
+      }
+      this.applyMap();
       this.game((g) => g.announce(this.mapShown ? 'Map shown.' : 'Map hidden. The directions and buttons stay.'));
+    });
+    this.el('ph-steps').addEventListener('click', () => {
+      this.stepsOpen = !this.stepsOpen;
+      this.applyMap();
+      this.showSteps();
+      if (this.stepsOpen && !this.el('ph-route').children.length) this.game((g) => g.announce('No route yet. Choose a destination: tap Where to.'));
     });
     this.el('ph-mode').addEventListener('click', () => this.setMode(this.mode === 'travel' ? 'explore' : 'travel', true));
   }
@@ -229,21 +259,51 @@ export class Phone {
     return !this.root.hidden;
   }
 
-  /** Whether the touch map is on screen; remembered between visits. Hidden, the directions and buttons have the room. */
+  /**
+   * Whether travel mode shows the touch map; off until Show map is chosen, then remembered.
+   * Hidden, the directions and buttons have the room. Explore mode is the map, so it always shows it.
+   */
   private mapShown = loadMapShown();
 
-  private showMap(on: boolean) {
-    this.mapShown = on;
-    this.el('ph-grid').hidden = !on;
+  /** the list of next turns, shown in place of the map when it is hidden */
+  private stepsOpen = false;
+
+  private get gridOn(): boolean {
+    return this.mode === 'explore' || this.mapShown;
+  }
+
+  private applyMap() {
+    const on = this.gridOn;
+    const grid = this.el('ph-grid');
+    if (on && grid.hidden) this.frame = null; // it was not kept up to date while hidden
+    grid.hidden = !on;
     this.el('ph-dest').hidden = !on; // squares are chosen on the map
-    this.el('ph-map').textContent = on ? 'Hide map' : 'Show map';
+    this.el('ph-status').hidden = !on; // which way is up and the square size: about the map
+    this.el('ph-map').hidden = this.mode === 'explore';
+    this.el('ph-map').textContent = this.mapShown ? 'Hide map' : 'Show map';
     this.root.classList.toggle('no-map', !on);
-    if (on) this.frame = null; // it was not kept up to date while hidden
-    try {
-      localStorage.setItem(MAP_KEY, on ? 'shown' : 'hidden');
-    } catch {
-      // ignore
-    }
+    const steps = this.el('ph-steps');
+    steps.hidden = on || this.mode !== 'travel';
+    steps.setAttribute('aria-expanded', String(this.stepsOpen));
+    steps.textContent = this.stepsOpen ? 'Hide next turns' : 'Show next turns';
+    this.el('ph-route').hidden = steps.hidden || !this.stepsOpen;
+    this.root.classList.toggle('steps-open', !this.el('ph-route').hidden);
+  }
+
+  /**
+   * Keep the list of next turns current. Rows change in place, and only when their words do, so a
+   * screen reader resting on one is not thrown back to the top as you walk.
+   */
+  private showSteps() {
+    const list = this.el('ph-route');
+    if (list.hidden) return;
+    const lines = this.getGame()?.routeSteps(5) ?? [];
+    while (list.children.length > lines.length) list.lastElementChild!.remove();
+    lines.forEach((text, i) => {
+      let li = list.children[i] as HTMLLIElement | undefined;
+      if (!li) li = list.appendChild(document.createElement('li'));
+      if (li.textContent !== text) li.textContent = text;
+    });
   }
 
   /** The first screen on a phone: Begin (which, being a tap, may start sound, speech and location) or the full menu. */
@@ -255,10 +315,11 @@ export class Phone {
 
   show(mode: 'travel' | 'explore') {
     this.root.hidden = false;
-    this.showMap(this.mapShown);
     this.root.classList.remove('welcome');
     this.el('ph-voice').textContent = this.hooks.voiceLabel();
     this.el('ph-shake').textContent = this.hooks.shakeLabel();
+    this.chosen = null; // a fresh start: squares were chosen on the last map
+    this.select(-1);
     this.setMode(mode, false);
     clearInterval(this.timer);
     this.timer = setInterval(() => this.tick(), 250);
@@ -275,16 +336,20 @@ export class Phone {
   setMode(mode: 'travel' | 'explore', announce: boolean) {
     this.mode = mode;
     const travel = mode === 'travel';
+    if (!travel) this.centre = null; // explore starts around you, not where it was last panned to
     this.el('ph-travel').hidden = !travel;
     this.el('ph-explore').hidden = travel;
     this.el('ph-mode').textContent = travel ? 'Travel mode. Switch to explore' : 'Explore mode. Switch to travel';
     this.frame = null; // draw afresh for the new mode
     this.up = null;
+    this.applyMap();
     if (announce)
       this.game((g) =>
         g.announce(
           travel
-            ? 'Travel mode. The map follows you, with up the street you face. Touch a square to hear what is there.'
+            ? this.mapShown
+              ? 'Travel mode. The map follows you, with up the street you face. Touch a square to hear what is there.'
+              : 'Travel mode. Directions and buttons; Show map adds a touch map around you.'
             : 'Explore mode. North is up. Pan and zoom with the buttons below the map.',
         ),
       );
@@ -295,7 +360,11 @@ export class Phone {
     const g = this.getGame();
     const status = this.el('ph-status');
     if (!g || !g.pose.ready) {
-      status.textContent = 'Loading the map…';
+      // the directions line too: with the map hidden it is the only line about the map that shows
+      const wait = g?.pose.loadFailed ? 'Could not load the map. Trying again shortly.' : 'Loading the map…';
+      status.textContent = wait;
+      const d = this.el('ph-dirs');
+      if (d.textContent !== wait) d.textContent = wait;
       return;
     }
     const p = g.pose;
@@ -316,9 +385,19 @@ export class Phone {
       cy = this.centre.y;
     }
     const f = this.frame;
-    if (!f || f.up !== up || f.size !== size || f.units !== units || f.mode !== this.mode || dist(f.cx, f.cy, cx, cy) > size / 2) {
-      this.frame = { cx, cy, up, size, units, mode: this.mode };
+    // a newly arrived map can fill in squares that were not loaded, or correct them
+    const moved = !f || f.up !== up || f.size !== size || f.units !== units || f.mode !== this.mode || dist(f.cx, f.cy, cx, cy) > size / 2;
+    if (moved || f.ver !== p.mapVersion) {
+      this.frame = { cx, cy, up, size, units, mode: this.mode, ver: p.mapVersion };
       void this.render();
+    }
+    // where you are: the centre in travel mode; in explore mode wherever the panning has left you, if on the map
+    const fr = this.frame!;
+    const me = cellOf(fr.cx, fr.cy, fr.up, fr.size, p.x, p.y);
+    if (me !== this.meIdx) {
+      this.buttons[this.meIdx]?.classList.remove('me');
+      this.buttons[me]?.classList.add('me');
+      this.meIdx = me;
     }
     const n = SQUARES[this.sizeIdx];
     const unit = units === 'imperial' ? 'yard' : 'metre';
@@ -326,13 +405,14 @@ export class Phone {
     const dirs = travel ? g.directionsText() || (g.hasDestination ? '' : 'Choose a destination: tap Where to.') : 'Exploring. Touch the map, or pan with the buttons.';
     const d = this.el('ph-dirs');
     if (dirs && d.textContent !== dirs) d.textContent = dirs;
+    this.showSteps();
   }
 
   /** Work out what every square holds and label it. */
   private async render() {
     const g = this.getGame();
     const f = this.frame;
-    if (!g || !f || !this.mapShown) return;
+    if (!g || !f || !this.gridOn) return;
     const seq = ++this.seq;
     const travel = f.mode === 'travel';
     const n = SQUARES[this.sizeIdx];
@@ -353,7 +433,6 @@ export class Phone {
     this.select(-1);
     found.forEach((c, i) => {
       const b = this.buttons[i];
-      b.classList.toggle('me', i === (N * N - 1) / 2);
       if (!c) {
         b.textContent = '';
         b.setAttribute('aria-label', 'Not loaded yet');
@@ -388,17 +467,18 @@ export class Phone {
     g.announce(`${c.label}.${hood ? ` Near ${hood}.` : ''} Set as destination is below the map.`);
   }
 
+  /** Mark square i (-1: none) as chosen. Redrawing the map unmarks the squares but keeps the choice. */
   private select(i: number) {
-    this.selected = i;
     this.buttons.forEach((b, k) => b.setAttribute('aria-pressed', String(k === i)));
+    if (this.cells[i]) this.chosen = this.cells[i];
     const dest = this.el<HTMLButtonElement>('ph-dest');
-    const c = this.cells[i];
+    const c = this.chosen;
     dest.disabled = !c;
     dest.textContent = c ? `Set as destination: ${c.text.split(',')[0]}` : 'Set as destination';
   }
 
   private setDestination() {
-    const c = this.cells[this.selected];
+    const c = this.chosen;
     this.game((g) => {
       if (!c) return g.announce('Double tap a square on the map first.');
       g.setTarget({ name: c.text.split(',')[0], x: c.x, y: c.y });
