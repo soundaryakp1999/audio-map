@@ -26,7 +26,7 @@ import { postOsmNote } from './osmnotes';
 import { Phone, isPhone } from './phone';
 import { requestCompass } from './gps';
 import { requestMotion, startShake } from './shake';
-import { SignalWatcher } from './signal';
+import { SignalWatcher, styleWarning } from './signal';
 import type { SignalModel } from './signalModel';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -332,10 +332,12 @@ async function startSignal(): Promise<boolean> {
   }
   signal = w;
   const d = game?.signalCrossingWithin(40) ?? null;
+  const style = styleWarning(game?.country ?? null);
   const where = d === null ? `No signal crossing is mapped within ${fmtDistance(40, settings.units)}, but it watches anyway.` : `Mapped signal crossing, ${fmtDistance(d, settings.units)}.`;
   speech.say(
     `Experimental. ${where} Point the back camera at the crossing signal, a little upward, and hold it steady. ` +
       `A detector on this phone looks for walk and do not walk signals. It was trained on few photos, misses most distant signals, and can be wrong. ` +
+      (style ? `${style} ` : '') +
       `A slow low tone means do not walk. A short high trill means walk, maybe. Silence does not mean walk. This tool may not be reliable, and it is not a replacement for your mobility aids or orientation and mobility training.`,
     'high',
   );
