@@ -1,19 +1,21 @@
-// Watches the rear camera for a pedestrian signal and beeps for it: slowly for Don't Walk, fast for Walk.
-// On its own it sees only lit red or orange (Don't Walk), and says 'unsure' when red and green both show. Colour cannot
-// tell a walk signal from a car light, a sign or glare, so Walk comes only from the optional `cloud` recogniser,
-// and only when the local check sees nothing: a local Don't Walk or 'unsure' always wins. A false Walk is the one
-// mistake this must not make.
-// ponytail: local check counts saturated bright red pixels only. A symbol detector on the device would replace `cloud`.
+// Watches the rear camera for a pedestrian signal and beeps for it: a slow low tone for Don't Walk, a short high
+// trill for Walk. On its own it sees only lit red or orange (Don't Walk), and says 'unsure' when red and green both
+// show. Colour cannot tell a walk signal from a car light, a sign or glare, so Walk comes only from the recognisers
+// (the on-device detector, and Gemini if set up), and only when the local check sees nothing: a local Don't Walk or
+// 'unsure' always wins. A false Walk is the one mistake this must not make.
 
 export type SignalState = 'walk' | 'dontWalk' | 'unsure' | 'none';
+
+/** Reads the camera frame and says what signal it shows; it may be slow or fail, so its answers are checked for age and repeated. */
+export type Recognise = (video: HTMLVideoElement) => Promise<SignalState>;
 
 export interface SignalOptions {
   /** the video element that shows the camera; it must be in the page, and may be hidden from view */
   video: HTMLVideoElement;
   /** called when the confirmed state changes */
   onChange?: (state: SignalState) => void;
-  /** reads a photo (base64 JPEG) and says what signal it shows; it may be slow or fail, so its answers are checked for age and repeated */
-  cloud?: (jpegBase64: string) => Promise<SignalState>;
+  /** recognisers and how often each may be asked (ms); a slow one is simply asked less often */
+  recognisers?: { read: Recognise; everyMs: number }[];
   /** frames are looked at only while this returns true, e.g. at a mapped signal crossing; any other frame reads as no signal */
   gate?: () => boolean;
   /** frames analysed per second */
@@ -22,7 +24,7 @@ export interface SignalOptions {
   minFraction?: number;
   /** same reading in a row before the state changes, so one noisy frame does not flip the alert */
   confirmFrames?: number;
-  /** milliseconds between beeps while Walk shows */
+  /** milliseconds between trills while Walk shows */
   walkBeepMs?: number;
   /** milliseconds between beeps while Don't Walk shows */
   dontWalkBeepMs?: number;
@@ -30,12 +32,10 @@ export interface SignalOptions {
 
 const SIZE = { w: 64, h: 48 }; // frames are shrunk to this before counting; a signal is still several pixels wide
 const LOST_FRAMES = 10; // frames with no signal before the alert goes quiet
-const CLOUD_MS = 1000; // one photo to the recogniser per second
-const CLOUD_FRESH_MS = 2500; // an answer older than this no longer counts
-const CLOUD_CONFIRM = 3; // the same answer this many times in a row before it counts
-const CLOUD_WIDTH = 640;
+const FRESH_MS = 2500; // a recogniser answer older than this no longer counts
+const CONFIRM = 3; // the same recogniser answer this many times in a row before it counts
 /** the part of the frame that counts, as fractions: the signal being crossed is aimed at, so the edges are not ours (and may hold bystanders) */
-const CENTRE = { x0: 0.25, x1: 0.75, y0: 0.2, y1: 0.8 };
+export const CENTRE = { x0: 0.25, x1: 0.75, y0: 0.2, y1: 0.8 };
 
 /** Hue (degrees), saturation and value (0-1) of an RGB pixel. */
 function hsv(r: number, g: number, b: number): [number, number, number] {
@@ -69,32 +69,79 @@ export function classify(rgba: Uint8ClampedArray, width: number, minFraction = 0
   return green >= need ? 'unsure' : 'dontWalk';
 }
 
-/** The local reading wins unless it sees nothing; then a recogniser answer counts only while fresh. */
-export function pick(local: SignalState, cloud: { state: SignalState; at: number }, now: number): SignalState {
-  return local === 'none' && now - cloud.at <= CLOUD_FRESH_MS ? cloud.state : local;
+type Seen = { state: SignalState; at: number };
+const RANK: Record<SignalState, number> = { none: 0, walk: 1, unsure: 2, dontWalk: 3 };
+
+/**
+ * The local reading wins unless it sees nothing. Then the fresh recogniser answers count, and the most cautious of
+ * them wins: one saying Don't Walk or unsure outweighs another saying Walk.
+ */
+export function pick(local: SignalState, seen: Seen[], now: number): SignalState {
+  if (local !== 'none') return local;
+  return seen.filter((s) => now - s.at <= FRESH_MS).reduce<SignalState>((a, s) => (RANK[s.state] > RANK[a] ? s.state : a), 'none');
+}
+
+/** One recogniser, asked on a timer; its answer counts only once repeated CONFIRM times in a row. */
+class Recogniser {
+  seen: Seen = { state: 'none', at: 0 };
+  private timer: ReturnType<typeof setInterval> | undefined;
+  private busy = false;
+  private run = 0;
+  private candidate: SignalState = 'none';
+
+  constructor(
+    private readonly read: () => Promise<SignalState | null>,
+    private readonly everyMs: number,
+  ) {}
+
+  start(): void {
+    this.timer = setInterval(() => void this.ask(), this.everyMs);
+  }
+
+  stop(): void {
+    clearInterval(this.timer);
+    this.timer = undefined;
+    this.seen = { state: 'none', at: 0 };
+    this.run = 0;
+  }
+
+  private async ask(): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    let answer: SignalState | null = 'none';
+    try {
+      answer = await this.read();
+    } catch {
+      // a failed or late answer is the same as no answer
+    }
+    this.busy = false;
+    if (answer === null || !this.timer) return; // not asked (no frame, or away from a crossing), or stopped meanwhile
+    this.run = answer === this.candidate ? this.run + 1 : 1;
+    this.candidate = answer;
+    this.seen = { state: this.run >= CONFIRM ? answer : 'none', at: Date.now() };
+  }
 }
 
 export class SignalWatcher {
-  private readonly o: Required<Omit<SignalOptions, 'onChange' | 'gate' | 'cloud'>> & Pick<SignalOptions, 'onChange' | 'gate' | 'cloud'>;
+  private readonly o: Required<Omit<SignalOptions, 'onChange' | 'gate' | 'recognisers'>> & Pick<SignalOptions, 'onChange' | 'gate'>;
   private readonly canvas = document.createElement('canvas');
+  private readonly recognisers: Recogniser[];
   private stream: MediaStream | null = null;
   private audio: AudioContext | null = null;
-  private readonly photo = document.createElement('canvas');
   private scan: ReturnType<typeof setInterval> | undefined;
-  private cloudScan: ReturnType<typeof setInterval> | undefined;
-  private cloudBusy = false;
-  private cloudRun = 0;
-  private cloudCandidate: SignalState = 'none';
-  private cloudSeen: { state: SignalState; at: number } = { state: 'none', at: 0 };
   private alert: ReturnType<typeof setInterval> | undefined;
   private state: SignalState = 'none';
   private candidate: SignalState = 'none';
   private run = 0;
 
   constructor(options: SignalOptions) {
-    this.o = { fps: 5, minFraction: 0.004, confirmFrames: 3, walkBeepMs: 250, dontWalkBeepMs: 1200, ...options };
+    this.o = { fps: 5, minFraction: 0.004, confirmFrames: 3, walkBeepMs: 600, dontWalkBeepMs: 1200, ...options };
     this.canvas.width = SIZE.w;
     this.canvas.height = SIZE.h;
+    const { video } = options;
+    this.recognisers = (options.recognisers ?? []).map(
+      (r) => new Recogniser(async () => (video.readyState < 2 || this.o.gate?.() === false ? null : r.read(video)), r.everyMs),
+    );
   }
 
   get active(): boolean {
@@ -104,23 +151,25 @@ export class SignalWatcher {
   /** Open the rear camera and start watching. Call from a tap: browsers allow sound only after one. Rejects if the camera is refused. */
   async start(): Promise<void> {
     if (this.stream) return;
-    this.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    // a high resolution keeps a signal across the road big enough for the detector to see
+    this.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } },
+      audio: false,
+    });
     this.o.video.srcObject = this.stream;
     this.o.video.muted = true;
     this.o.video.setAttribute('playsinline', '');
     await this.o.video.play();
     this.audio = new AudioContext();
     this.scan = setInterval(() => this.frame(), 1000 / this.o.fps);
-    if (this.o.cloud) this.cloudScan = setInterval(() => void this.askCloud(), CLOUD_MS);
+    for (const r of this.recognisers) r.start();
   }
 
-  /** Stop the camera, the beeps and the buzz. Safe to call twice; call it when the screen closes. */
+  /** Stop the camera, the beeps and the recognisers. Safe to call twice; call it when the screen closes. */
   stop(): void {
     clearInterval(this.scan);
-    clearInterval(this.cloudScan);
-    this.scan = this.cloudScan = undefined;
-    this.cloudSeen = { state: 'none', at: 0 };
-    this.cloudRun = 0;
+    this.scan = undefined;
+    for (const r of this.recognisers) r.stop();
     this.setState('none');
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
@@ -138,7 +187,11 @@ export class SignalWatcher {
     if (this.o.gate?.() !== false) {
       ctx.drawImage(video, 0, 0, SIZE.w, SIZE.h);
       seen = classify(ctx.getImageData(0, 0, SIZE.w, SIZE.h).data, SIZE.w, this.o.minFraction);
-      seen = pick(seen, this.cloudSeen, Date.now());
+      seen = pick(
+        seen,
+        this.recognisers.map((r) => r.seen),
+        Date.now(),
+      );
     }
     // a signal needs a few frames in a row to appear, and a longer gap to go away: lamps flicker and cars pass
     const need = seen === 'none' ? LOST_FRAMES : this.o.confirmFrames;
@@ -147,55 +200,36 @@ export class SignalWatcher {
     if (this.run >= need && seen !== this.state) this.setState(seen);
   }
 
-  /** Send one photo to the recogniser; its answer counts only once repeated, and only while fresh. */
-  private async askCloud(): Promise<void> {
-    const { video, cloud } = this.o;
-    if (!cloud || this.cloudBusy || video.readyState < 2 || this.o.gate?.() === false) return;
-    this.cloudBusy = true;
-    let answer: SignalState = 'none';
-    try {
-      // only the middle of the frame is sent, so bystanders and plates at the edges never leave the phone
-      const sx = video.videoWidth * CENTRE.x0;
-      const sy = video.videoHeight * CENTRE.y0;
-      const sw = video.videoWidth * (CENTRE.x1 - CENTRE.x0);
-      const sh = video.videoHeight * (CENTRE.y1 - CENTRE.y0);
-      this.photo.width = CLOUD_WIDTH;
-      this.photo.height = Math.round((CLOUD_WIDTH * sh) / Math.max(1, sw));
-      this.photo.getContext('2d')?.drawImage(video, sx, sy, sw, sh, 0, 0, this.photo.width, this.photo.height);
-      answer = await cloud(this.photo.toDataURL('image/jpeg', 0.6).split(',')[1]);
-    } catch {
-      // a failed or late answer is the same as no answer
-    }
-    this.cloudBusy = false;
-    if (!this.stream) return;
-    this.cloudRun = answer === this.cloudCandidate ? this.cloudRun + 1 : 1;
-    this.cloudCandidate = answer;
-    this.cloudSeen = { state: this.cloudRun >= CLOUD_CONFIRM ? answer : 'none', at: Date.now() };
-  }
-
   private setState(next: SignalState): void {
     if (next === this.state) return;
     this.state = next;
     clearInterval(this.alert);
     this.alert = undefined;
     if (next === 'walk' || next === 'dontWalk') {
-      const [hz, ms] = next === 'walk' ? [1000, this.o.walkBeepMs] : [400, this.o.dontWalkBeepMs];
-      this.beep(hz);
-      this.alert = setInterval(() => this.beep(hz), ms);
+      const sound = next === 'walk' ? () => this.trill() : () => this.tone(400, 0.25);
+      sound();
+      this.alert = setInterval(sound, next === 'walk' ? this.o.walkBeepMs : this.o.dontWalkBeepMs);
     }
     this.o.onChange?.(next);
   }
 
-  private beep(hz: number): void {
+  /** Walk: a short high trill. Not a rising pair (that is the turn cue) and not the ticking of a real accessible signal. */
+  private trill(): void {
+    for (let i = 0; i < 6; i++) this.tone(i % 2 ? 1650 : 1250, 0.04, i * 0.05);
+  }
+
+  /** Don't walk: one low, longer tone. */
+  private tone(hz: number, seconds: number, delay = 0): void {
     const a = this.audio;
     if (!a) return;
+    const at = a.currentTime + delay;
     const osc = a.createOscillator();
     const gain = a.createGain();
     osc.frequency.value = hz;
-    gain.gain.setValueAtTime(0.3, a.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, a.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.3, at);
+    gain.gain.exponentialRampToValueAtTime(0.001, at + seconds);
     osc.connect(gain).connect(a.destination);
-    osc.start();
-    osc.stop(a.currentTime + 0.12);
+    osc.start(at);
+    osc.stop(at + seconds);
   }
 }

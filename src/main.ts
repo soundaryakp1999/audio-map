@@ -26,8 +26,9 @@ import { postOsmNote } from './osmnotes';
 import { Phone, isPhone } from './phone';
 import { requestCompass } from './gps';
 import { requestMotion, startShake } from './shake';
-import { SignalWatcher } from './signal';
-import { KeyRejected, askGemini, findImageModels, listModels, type ModelChoice, type Swatch } from './cloudSignal';
+import { SignalWatcher, type Recognise } from './signal';
+import { KeyRejected, askGemini, findImageModels, listModels, middleJpeg, type ModelChoice, type Swatch } from './cloudSignal';
+import type { SignalModel } from './signalModel';
 import { clearKey, forgetStoredKey, loadKey, saveKey } from './geminiKey';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -403,10 +404,13 @@ function applyShake() {
   });
 }
 let signal: SignalWatcher | null = null;
-const SIGNAL_SPEECH = { walk: 'Walk signal. Check for traffic.', dontWalk: "Don't walk signal.", unsure: 'Not sure. Listen to traffic.', none: 'Signal lost.' };
+let signalModel: SignalModel | null = null;
+const SIGNAL_SPEECH = { walk: 'Walk signal, maybe. Check for traffic.', dontWalk: "Don't walk signal.", unsure: 'Not sure. Listen to traffic.', none: 'Signal lost.' };
 function stopSignal() {
   signal?.stop();
   signal = null;
+  signalModel?.release();
+  signalModel = null;
 }
 const shakeLabel = () => `Shake for address: ${settings.shake ? 'on' : 'off'}`;
 const voiceLabel = () => (settings.speechMode === 'voice' ? 'Speech: built-in voice' : 'Speech: screen reader');
@@ -446,23 +450,31 @@ const phone = new Phone($('phone'), () => game, {
     const model = settings.geminiModel;
     const key = settings.cloudWalk && model ? loadKey() : null;
     let refused = false;
+    let detector: SignalModel | null = null;
+    const recognisers: { read: Recognise; everyMs: number }[] = [
+      // asked as often as the phone can run it; until the model has loaded it is not asked
+      { read: async (v) => (detector ? detector.read(v) : 'none'), everyMs: 300 },
+    ];
+    if (key)
+      recognisers.push({
+        read: async (v) => {
+          try {
+            return await askGemini(key, model, middleJpeg(v));
+          } catch (e) {
+            if (e instanceof KeyRejected && !refused) {
+              refused = true;
+              clearKey();
+              speech.say('Google refused the Gemini key, so it was removed and Gemini is off.', 'high');
+            }
+            return 'none';
+          }
+        },
+        everyMs: 1000,
+      });
     const w = new SignalWatcher({
       video: $('ph-signal-video') as HTMLVideoElement,
       gate: () => game?.atSignalCrossing() ?? false,
-      cloud: key
-        ? async (jpeg) => {
-            try {
-              return await askGemini(key, model, jpeg);
-            } catch (e) {
-              if (e instanceof KeyRejected && !refused) {
-                refused = true;
-                clearKey();
-                speech.say('Google refused the Gemini key, so it was removed and Walk signals are off.', 'high');
-              }
-              return 'none';
-            }
-          }
-        : undefined,
+      recognisers,
       onChange: (s) => speech.say(SIGNAL_SPEECH[s], 'high'),
     });
     try {
@@ -473,12 +485,29 @@ const phone = new Phone($('phone'), () => game, {
       return false;
     }
     signal = w;
-    const walk = key
-      ? 'Walk signals come from Gemini, which can be wrong; photos are sent to Google. Fast beeps mean walk.'
+    const gemini = key
+      ? ' Gemini also looks, and photos of the middle of the view are sent to Google.'
       : settings.cloudWalk
-        ? 'Gemini is on in settings but no key is saved or no model is chosen, so there are no Walk signals.'
-        : 'There are no Walk signals.';
-    speech.say(`Point the back camera at the crossing signal. It listens only within about 15 metres of a mapped signal crossing. This is an aid only: slow beeps mean a red or orange do not walk signal is seen. ${walk} Silence does not mean walk. Always check the street yourself.`, 'high');
+        ? ' Gemini is on in settings but no key is saved or no model is chosen, so only the phone looks.'
+        : '';
+    speech.say(
+      `Experimental. Point the back camera at the crossing signal. It listens only within about 15 metres of a mapped signal crossing. ` +
+        `A detector on this phone looks for walk and do not walk signals. It was trained on few photos, misses most distant signals, and can be wrong.${gemini} ` +
+        `A slow low tone means do not walk. A short high trill means walk, maybe. Silence does not mean walk. Never cross on this alone: always listen to the traffic and check the street yourself.`,
+      'high',
+    );
+    // loaded only now, so the app itself stays small for everyone else
+    void import('./signalModel').then(({ SignalModel }) => SignalModel.load()).then(
+      (m) => {
+        if (signal !== w) return m.release(); // switched off while loading
+        detector = m;
+        signalModel = m;
+        speech.say('Signal detector ready.', 'normal');
+      },
+      () => {
+        if (signal === w) speech.say('The signal detector could not load on this phone, so only red and orange colours are watched.', 'high');
+      },
+    );
     return true;
   },
   guide: () => {

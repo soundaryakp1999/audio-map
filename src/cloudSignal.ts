@@ -1,8 +1,23 @@
 // Asks Gemini what a pedestrian signal shows. The player's key goes only in the x-goog-api-key header of a request to
 // the one fixed Google URL below: never in a URL, a log, speech or an error message. Nothing is cached or stored.
-import type { SignalState } from './signal';
+import { CENTRE, type SignalState } from './signal';
 
 const API = 'https://generativelanguage.googleapis.com/v1beta';
+const PHOTO_WIDTH = 640;
+let photo: HTMLCanvasElement | undefined;
+
+/** The middle of the camera frame as a base64 JPEG: bystanders and plates at the edges never leave the phone. Redrawn, so it carries no EXIF or location. */
+export function middleJpeg(video: HTMLVideoElement): string {
+  photo ??= document.createElement('canvas');
+  const sx = video.videoWidth * CENTRE.x0;
+  const sy = video.videoHeight * CENTRE.y0;
+  const sw = video.videoWidth * (CENTRE.x1 - CENTRE.x0);
+  const sh = video.videoHeight * (CENTRE.y1 - CENTRE.y0);
+  photo.width = PHOTO_WIDTH;
+  photo.height = Math.round((PHOTO_WIDTH * sh) / Math.max(1, sw));
+  photo.getContext('2d')?.drawImage(video, sx, sy, sw, sh, 0, 0, photo.width, photo.height);
+  return photo.toDataURL('image/jpeg', 0.6).split(',')[1];
+}
 const TIMEOUT_MS = 4000;
 const ANSWERS: Record<string, SignalState> = { walk: 'walk', dont_walk: 'dontWalk', unsure: 'unsure', none: 'none' };
 

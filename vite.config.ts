@@ -19,7 +19,7 @@ const CONNECT = [
 
 const CSP = [
   "default-src 'self'",
-  "script-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'", // the signal detector runs as WebAssembly; plain eval stays blocked
   "style-src 'self' 'unsafe-inline'", // the page and MapLibre set inline styles
   "img-src 'self' data: blob:",
   "media-src 'self' blob:",

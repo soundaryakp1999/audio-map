@@ -42,10 +42,22 @@ describe('classify', () => {
 
 describe('pick', () => {
   const walk = { state: 'walk' as const, at: 10_000 };
-  it('takes a fresh recogniser answer when the local check sees nothing', () => expect(pick('none', walk, 11_000)).toBe('walk'));
+  const stop = { state: 'dontWalk' as const, at: 10_000 };
+  const unsure = { state: 'unsure' as const, at: 10_000 };
+  const nothing = { state: 'none' as const, at: 10_000 };
+  it('takes a fresh recogniser answer when the local check sees nothing', () => expect(pick('none', [walk], 11_000)).toBe('walk'));
   it('lets a local dont walk or unsure beat a recogniser walk', () => {
-    expect(pick('dontWalk', walk, 11_000)).toBe('dontWalk');
-    expect(pick('unsure', walk, 11_000)).toBe('unsure');
+    expect(pick('dontWalk', [walk], 11_000)).toBe('dontWalk');
+    expect(pick('unsure', [walk], 11_000)).toBe('unsure');
   });
-  it('drops a stale recogniser answer', () => expect(pick('none', walk, 13_000)).toBe('none'));
+  it('drops a stale recogniser answer', () => expect(pick('none', [walk], 13_000)).toBe('none'));
+  it('lets the most cautious recogniser win', () => {
+    expect(pick('none', [walk, stop], 11_000)).toBe('dontWalk');
+    expect(pick('none', [stop, walk], 11_000)).toBe('dontWalk');
+    expect(pick('none', [walk, unsure], 11_000)).toBe('unsure');
+    expect(pick('none', [nothing, walk], 11_000)).toBe('walk');
+  });
+  it('ignores a stale dont walk but still counts a fresh walk beside it', () =>
+    expect(pick('none', [{ state: 'dontWalk', at: 0 }, walk], 11_000)).toBe('walk'));
+  it('sees nothing without recognisers', () => expect(pick('none', [], 11_000)).toBe('none'));
 });
