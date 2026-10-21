@@ -44,6 +44,8 @@ export interface Settings {
   customSound: CustomSound;
   /** the profile last chosen while using each vehicle */
   vehicleProfiles: Partial<Record<VehicleId, SoundProfile>>;
+  /** the look chosen for each vehicle on the visual map, by model id */
+  vehicleModels: Partial<Record<VehicleId, string>>;
   volume: number;
   /** place groups silenced while moving; on-demand lookups ignore this */
   mutedGroups: PlaceGroup[];
@@ -77,6 +79,7 @@ const DEFAULTS: Settings = {
   soundTheme: 'classic',
   customSound: { places: 'notable', sideStreets: true, extras: true },
   vehicleProfiles: {},
+  vehicleModels: {},
   volume: 0.8,
   mutedGroups: [],
   keyBindings: {},

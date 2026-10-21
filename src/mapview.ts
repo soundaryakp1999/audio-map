@@ -8,6 +8,9 @@ import type { LatLon } from './geo';
 import { applyHighContrast } from './highcontrast';
 import type { Favorite } from './favorites';
 import type { Note } from './notes';
+import type { VehicleId } from './settings';
+import { VEHICLE_MODELS, type VehicleModel } from './vehicles';
+import { SPRITE_FRAMES, SPRITE_RATIO, drawVehicle } from './sprites';
 
 const STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 
@@ -24,6 +27,13 @@ export class MapView {
   private saved: FeatureCollection = { type: 'FeatureCollection', features: [] };
   private pending: { pos: LatLon; heading: number; speed: number } | null = null;
   private highContrast = false;
+  private vehicle: VehicleId = 'walker';
+  private model: VehicleModel = VEHICLE_MODELS.walker[0];
+  private frames = 0;
+  private frame = 0;
+  /** stride or rotor progress, in frames */
+  private phase = 0;
+  private lastUpdate = 0;
   headingUp = true;
 
   constructor(container: HTMLElement, center: LatLon, highContrast = false) {
@@ -51,6 +61,7 @@ export class MapView {
     if (on === this.highContrast) return;
     this.highContrast = on;
     this.ready = false;
+    this.frames = 0; // a new style starts without our images
     this.map.setStyle(STYLE, { diff: false });
   }
 
@@ -127,14 +138,63 @@ export class MapView {
       paint: { 'fill-color': hc ? '#00ff66' : '#1e88e5', 'fill-opacity': hc ? 0.4 : 0.25 },
     });
     m.addSource('me', { type: 'geojson', data: points([]) });
+    this.addSprites();
     m.addLayer({
       id: 'me',
-      type: 'circle',
+      type: 'symbol',
       source: 'me',
-      paint: hc
-        ? { 'circle-radius': 15, 'circle-color': '#00ff66', 'circle-stroke-color': '#000', 'circle-stroke-width': 5 }
-        : { 'circle-radius': 8, 'circle-color': '#1e88e5', 'circle-stroke-color': '#fff', 'circle-stroke-width': 3 },
+      layout: {
+        'icon-image': this.spriteId(),
+        'icon-size': hc ? 1.3 : 1,
+        'icon-rotate': ['get', 'heading'],
+        'icon-rotation-alignment': 'map',
+        'icon-pitch-alignment': 'map',
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+      },
     });
+  }
+
+  /** Show this vehicle in this model; its drawings replace the last one's. */
+  setVehicle(vehicle: VehicleId, model: VehicleModel) {
+    if (vehicle === this.vehicle && model.id === this.model.id) return;
+    this.vehicle = vehicle;
+    this.model = model;
+    this.phase = 0;
+    this.frame = 0;
+    if (!this.ready) return;
+    this.addSprites();
+    this.map.setLayoutProperty('me', 'icon-image', this.spriteId());
+  }
+
+  private spriteId() {
+    return `vehicle-${this.frame}`;
+  }
+
+  /** One image per animation frame; sizes differ between vehicles, so old ones are removed, not updated. */
+  private addSprites() {
+    for (let i = 0; i < this.frames; i++) this.map.removeImage(`vehicle-${i}`);
+    this.frames = SPRITE_FRAMES[this.vehicle];
+    for (let i = 0; i < this.frames; i++) {
+      this.map.addImage(`vehicle-${i}`, drawVehicle(this.vehicle, this.model, i, this.highContrast), { pixelRatio: SPRITE_RATIO });
+    }
+  }
+
+  /** A walker strides with speed and stands still when stopped; a rotor always turns. */
+  private animate(speed: number, now: number) {
+    const dt = Math.min(0.2, (now - this.lastUpdate) / 1000);
+    this.lastUpdate = now;
+    let frame = 0;
+    if (this.vehicle === 'helicopter') {
+      this.phase += dt * 24;
+      frame = Math.floor(this.phase) % this.frames;
+    } else if (this.vehicle === 'walker' && speed > 0.2) {
+      this.phase += (dt * speed) / 0.35; // a frame per 35 cm, a full stride per 1.4 m
+      frame = Math.floor(this.phase) % this.frames;
+    }
+    if (frame === this.frame) return;
+    this.frame = frame;
+    this.map.setLayoutProperty('me', 'icon-image', this.spriteId());
   }
 
   resize() {
@@ -177,7 +237,10 @@ export class MapView {
       this.lastTrail = now;
       (this.map.getSource('trail') as GeoJSONSource).setData(line(this.trail));
     }
-    (this.map.getSource('me') as GeoJSONSource).setData(points([[pos.lon, pos.lat]]));
+    const me = points([[pos.lon, pos.lat]]);
+    me.features[0].properties = { heading };
+    (this.map.getSource('me') as GeoJSONSource).setData(me);
+    this.animate(speed, now);
     (this.map.getSource('cone') as GeoJSONSource).setData(cone(pos, heading, (this.highContrast ? 30 : 40) + speed * 3));
 
     // high contrast: a little closer in, so streets and names are bigger on screen

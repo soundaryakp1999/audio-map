@@ -1,5 +1,6 @@
 import { REBINDABLE, conflict, isReserved, type Binding, type KeyOverrides } from './keymap';
 import type { Settings } from './settings';
+import { VEHICLE_MODELS } from './vehicles';
 
 export interface BackupPlace {
   name: string;
@@ -77,6 +78,14 @@ export function validate(raw: unknown): Backup {
       if (typeof p === 'string' && PROFILES.includes(p)) vp[v] = p;
     }
     settings.vehicleProfiles = vp;
+  }
+  if (isObj(s.vehicleModels)) {
+    const vm: Record<string, string> = {};
+    for (const v of Object.keys(VEHICLE_MODELS) as (keyof typeof VEHICLE_MODELS)[]) {
+      const id = s.vehicleModels[v];
+      if (VEHICLE_MODELS[v].some((m) => m.id === id)) vm[v] = id as string;
+    }
+    settings.vehicleModels = vm;
   }
   if (isObj(s.keyBindings)) {
     const kb: KeyOverrides = {};
