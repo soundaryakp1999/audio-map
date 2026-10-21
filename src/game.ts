@@ -207,6 +207,8 @@ export class Game {
   /** lines calling at a stop, by OSM node, once looked up */
   private stopLines = new Map<number, string>();
   private throttle = 0;
+  /** the brake key is held */
+  private braking = false;
   private vehicle: VehicleProfile;
 
   private running = false;
@@ -361,7 +363,6 @@ export class Game {
     this.clearRoute();
     this.map.resetTrail();
     this.map.setDestination(null);
-    this.audio.setVehicle(this.vehicle.id);
     this.showVehicle();
     this.audio.resume();
     this.paused = false;
@@ -680,7 +681,6 @@ export class Game {
     this.settings.soundProfile = this.settings.vehicleProfiles[id] ?? before;
     saveSettings(this.settings);
     this.speed = Math.min(this.speed, this.vehicle.maxSpeed);
-    this.audio.setVehicle(id);
     this.showVehicle();
     if (this.dest && this.world) {
       if (this.settings.turnByTurn && id !== 'helicopter') void this.computeRoute(announce);
@@ -693,11 +693,14 @@ export class Game {
     if (this.proj && this.vehicle.loadRadius > prevRadius && !this.loading) void this.load(false);
   }
 
+  /** The vehicle's model on the map and in its sounds. */
   private showVehicle() {
-    this.map.setVehicle(this.vehicle.id, modelFor(this.vehicle.id, this.settings.vehicleModels));
+    const model = modelFor(this.vehicle.id, this.settings.vehicleModels);
+    this.map.setVehicle(this.vehicle.id, model);
+    this.audio.setVehicle(this.vehicle.id, model.id);
   }
 
-  /** The same vehicle's key again changes only how it looks on the map. */
+  /** The same vehicle's key again changes its model: how it looks and sounds, not how it drives. */
   private cycleModel() {
     const m = nextModel(this.vehicle.id, this.settings.vehicleModels);
     this.settings.vehicleModels = { ...this.settings.vehicleModels, [this.vehicle.id]: m.id };
@@ -749,6 +752,7 @@ export class Game {
         speed: this.speed,
         maxSpeed: this.vehicle.maxSpeed,
         throttle: this.throttle,
+        brake: this.braking,
         surface: this.grid ? 'paved' : !this.onRoad && this.vehicle.id !== 'helicopter' ? 'offroad' : this.road?.surface && ROUGH.has(this.road.surface) ? 'rough' : 'paved',
         tunnel: !this.grid && !!this.road?.tunnel && this.onRoad,
         wind: !(this.live && this.liveFix),
@@ -759,6 +763,7 @@ export class Game {
 
   private step(dt: number) {
     this.clock += dt;
+    this.braking = false; // only keyboard driving brakes; grid steps and live GPS never do
     const v = this.vehicle;
     if (this.grid) {
       // grid steps move the traveller; only notes, the destination and map loading carry on
@@ -820,6 +825,7 @@ export class Game {
     if (inp.isDown('Slash')) {
       this.speed -= v.brake * dt;
       this.throttle = -1;
+      this.braking = true;
     }
     let max = v.maxSpeed;
     if (v.offRoadMax !== null && !this.onRoad) max = Math.min(max, v.offRoadMax);
@@ -2604,6 +2610,8 @@ export class Game {
       case 'car':
       case 'helicopter':
         return action === this.vehicle.id ? this.cycleModel() : this.setVehicle(action, true);
+      case 'horn':
+        return this.audio.horn();
       case 'volumeUp':
       case 'volumeDown': {
         const v = Math.max(0, Math.min(1, this.settings.volume + (action === 'volumeUp' ? 0.1 : -0.1)));
@@ -2660,7 +2668,7 @@ export class Game {
         'H heading, S speed, L location, Shift L live GPS: your real position and compass move you, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
         'F3 grid mode: arrows step north, south, west and east with a sound for the ground, minus and equals change the step, Space says where you are. ' +
         'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. ' + `${this.keyText('navigate')} searches for a destination. ` + 'D says the distance to go, D twice switches walking routes between shortest and streets only, ' + `${this.keyText('turnByTurn')} toggles turn by turn directions,` + ' I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it, Control V reports a wrong or missing road or place to OpenStreetMap. Z copies a link to this spot and route, Shift Z saves the route as a GPX file, Shift S saves the map here for offline use. U says how the trip went. E says where you are with the nearest landmark and stop, and the way back to the route if you have left it. Shift E turns look around on: stand still, hold the phone flat and point it a way to hear what lies there. Shift I says what lies ahead, the way you are walking. Shift M opens the destination in your maps app for its directions. Control right bracket hears places from farther, Control left bracket from nearer. Shift K says your address and shares your location as a map link. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. Shift X says the nearest entrances, platforms and lifts, Shift O the nearest toilets, bench, drinking water, shelter, post box and cash machine. Shift T reads the next departures when you stand at a stop, using the open Transitous feed, which covers much of Europe, North America and Australia. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. Control Shift P opens the command palette: type to find any action. ' +
-        '1 to 4 change vehicle; the same number again changes how it looks on the map. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. Sound themes are chosen in settings or from the command palette. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
+        '1 to 4 change vehicle; the same number again changes its model, which looks and sounds different. J sounds the horn, bell or whistle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. Sound themes are chosen in settings or from the command palette. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
     );
