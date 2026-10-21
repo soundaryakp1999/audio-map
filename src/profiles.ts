@@ -21,22 +21,22 @@ type Preset = Exclude<SoundProfile, 'custom'>;
 type ByVehicle<T> = Record<VehicleId, T>;
 
 const MIN_TIER: Record<Preset, ByVehicle<number>> = {
-  full: { walker: 0, bicycle: 0, car: 0, helicopter: 0 },
-  simple: { walker: 0, bicycle: 1, car: 2, helicopter: 2 },
-  minimal: { walker: 2, bicycle: 2, car: 3, helicopter: 3 },
+  full: { walker: 0, bicycle: 0, car: 0, motorbike: 0, helicopter: 0 },
+  simple: { walker: 0, bicycle: 1, car: 2, motorbike: 2, helicopter: 2 },
+  minimal: { walker: 2, bicycle: 2, car: 3, motorbike: 3, helicopter: 3 },
 };
 
 const MAJOR_ONLY: Record<Preset, ByVehicle<boolean>> = {
-  full: { walker: false, bicycle: false, car: false, helicopter: false },
-  simple: { walker: false, bicycle: false, car: true, helicopter: true },
-  minimal: { walker: false, bicycle: true, car: true, helicopter: true },
+  full: { walker: false, bicycle: false, car: false, motorbike: false, helicopter: false },
+  simple: { walker: false, bicycle: false, car: true, motorbike: true, helicopter: true },
+  minimal: { walker: false, bicycle: true, car: true, motorbike: true, helicopter: true },
 };
 
 /** intersection beeps and compass ticks */
 const EXTRAS: Record<Preset, ByVehicle<boolean>> = {
-  full: { walker: true, bicycle: true, car: true, helicopter: true },
-  simple: { walker: true, bicycle: true, car: false, helicopter: false },
-  minimal: { walker: false, bicycle: false, car: false, helicopter: false },
+  full: { walker: true, bicycle: true, car: true, motorbike: true, helicopter: true },
+  simple: { walker: true, bicycle: true, car: false, motorbike: false, helicopter: false },
+  minimal: { walker: false, bicycle: false, car: false, motorbike: false, helicopter: false },
 };
 
 export const PROFILE_TEXT: Record<SoundProfile, string> = {

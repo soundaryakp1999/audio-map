@@ -7,9 +7,9 @@ import type { VehicleModel } from './vehicles';
 export const SPRITE_RATIO = 2;
 
 /** animation frames: a walker's stride, a helicopter's rotor; the rest stand still */
-export const SPRITE_FRAMES: Record<VehicleId, number> = { walker: 4, bicycle: 1, car: 1, helicopter: 4 };
+export const SPRITE_FRAMES: Record<VehicleId, number> = { walker: 4, bicycle: 1, car: 1, motorbike: 1, helicopter: 4 };
 
-const SIZE: Record<VehicleId, [number, number]> = { walker: [26, 30], bicycle: [24, 44], car: [32, 56], helicopter: [76, 76] };
+const SIZE: Record<VehicleId, [number, number]> = { walker: [26, 30], bicycle: [24, 44], car: [32, 56], motorbike: [30, 50], helicopter: [76, 76] };
 
 const GLASS = '#4a6a80';
 const TYRE = '#212121';
@@ -30,7 +30,7 @@ export function drawVehicle(vehicle: VehicleId, model: VehicleModel, frame: numb
   c.lineCap = 'round';
   c.strokeStyle = highContrast ? '#000' : 'rgba(0,0,0,0.7)';
   c.lineWidth = highContrast ? 2.2 : 1.2;
-  ({ walker, bicycle, car, helicopter })[vehicle](c, model, frame);
+  ({ walker, bicycle, car, motorbike, helicopter })[vehicle](c, model, frame);
   return c.getImageData(0, 0, canvas.width, canvas.height);
 }
 
@@ -142,6 +142,74 @@ function car(c: Ctx, m: VehicleModel) {
   shape(c, '#fff59d', rect(c, half - 7, -26, 5, 3, 1.5));
   shape(c, '#d50000', rect(c, -half + 2, 23.5, 5, 2.5, 1), false);
   shape(c, '#d50000', rect(c, half - 7, 23.5, 5, 2.5, 1), false);
+}
+
+function motorbike(c: Ctx, m: VehicleModel) {
+  const scooter = m.id === 'scooter';
+  const cruiser = m.id === 'cruiser';
+  const dirt = m.id === 'dirt';
+  const tyre = dirt ? 5 : scooter ? 4.5 : cruiser ? 6 : 5.5;
+  const bar = cruiser ? 12 : dirt ? 11 : scooter ? 8.5 : 7;
+  shape(c, SHADOW, rect(c, -4, -20, 11, 44, 5), false);
+  shape(c, TYRE, rect(c, -tyre / 2, -24, tyre, scooter ? 9 : 13, tyre / 2), false);
+  shape(c, TYRE, rect(c, -tyre / 2, scooter ? 15 : 11, tyre, scooter ? 9 : 13, tyre / 2), false);
+  if (dirt) {
+    // knobbly tread, and a number board on the front
+    c.save();
+    c.strokeStyle = '#616161';
+    c.lineWidth = 1;
+    c.beginPath();
+    for (const y of [-22, -19, -16, -13, 13, 16, 19, 22]) {
+      c.moveTo(-tyre / 2, y);
+      c.lineTo(tyre / 2, y);
+    }
+    c.stroke();
+    c.restore();
+  }
+  if (scooter) {
+    shape(c, m.trim, rect(c, -6, -17, 12, 6, 3)); // leg shield
+    shape(c, m.body, rect(c, -6.5, -12, 13, 26, 5)); // floorboard and seat
+  } else {
+    shape(c, cruiser ? m.trim : m.body, rect(c, -3, -14, 6, 26, 3)); // frame and engine
+    shape(c, m.body, ellipse(c, 0, -7, cruiser ? 5 : 4.5, cruiser ? 6.5 : 6)); // fuel tank
+    if (!dirt) shape(c, m.body, rect(c, -3.5, 4, 7, 9, 3)); // tail
+  }
+  if (m.id === 'sport') {
+    // pointed fairing round the headlight
+    shape(c, m.body, () => {
+      c.moveTo(-5.5, -13);
+      c.lineTo(0, -21);
+      c.lineTo(5.5, -13);
+      c.closePath();
+    });
+    shape(c, GLASS, ellipse(c, 0, -15, 2.5, 2));
+  }
+  if (dirt) shape(c, m.trim, rect(c, -4, -21, 8, 4, 1.5));
+  c.save();
+  c.beginPath();
+  c.moveTo(-bar, cruiser ? -11 : -13);
+  c.lineTo(0, -14);
+  c.lineTo(bar, cruiser ? -11 : -13);
+  c.strokeStyle = cruiser ? m.trim : TYRE;
+  c.lineWidth = 2;
+  c.stroke();
+  c.restore();
+  shape(c, '#fff59d', ellipse(c, 0, scooter ? -18 : -17.5, 2, 1.2), false);
+  // rider reaching for the bars, then helmet; a sport rider tucks forward
+  const lean = m.id === 'sport' ? -3 : 0;
+  c.save();
+  c.beginPath();
+  c.moveTo(-6, 3 + lean);
+  c.lineTo(-bar + 1, cruiser ? -11 : -12.5);
+  c.moveTo(6, 3 + lean);
+  c.lineTo(bar - 1, cruiser ? -11 : -12.5);
+  c.strokeStyle = '#263238';
+  c.lineWidth = 3;
+  c.stroke();
+  c.restore();
+  shape(c, '#37474f', ellipse(c, 0, 4 + lean, 7.5, 4.5));
+  shape(c, m.id === 'scooter' ? m.trim : m.id === 'cruiser' ? '#5d4037' : m.body, ellipse(c, 0, 0.5 + lean, 4.5, 5));
+  shape(c, GLASS, rect(c, -3, -3.5 + lean, 6, 2, 1), false); // visor
 }
 
 function helicopter(c: Ctx, m: VehicleModel, frame: number) {

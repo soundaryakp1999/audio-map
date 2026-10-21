@@ -27,7 +27,7 @@ const MAX_TEXT = 2000;
 const MAX_FILE_BYTES = 1_000_000;
 
 const ENUMS: Record<string, readonly string[]> = {
-  vehicle: ['walker', 'bicycle', 'car', 'helicopter'],
+  vehicle: ['walker', 'bicycle', 'car', 'motorbike', 'helicopter'],
   speechMode: ['screenreader', 'voice'],
   units: ['metric', 'imperial'],
   display: ['highContrast', 'standard'],

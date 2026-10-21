@@ -130,7 +130,7 @@ function applyDisplay() {
   else delete document.documentElement.dataset.display;
 }
 
-/** settings that can also change by key (vehicle 1–4, walking routes D twice) */
+/** settings that can also change by key (vehicle 1–5, walking routes D twice) */
 function syncVehicleRadios() {
   for (const name of ['vehicle', 'walkRoute', 'soundProfile', 'soundTheme'] as const) {
     for (const r of document.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`)) r.checked = r.value === settings[name];

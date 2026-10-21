@@ -167,7 +167,9 @@ export class AudioEngine {
     const t = this.now;
     this.voice?.update(s, dt);
     const r = s.speed / Math.max(1, s.maxSpeed);
-    this.wind.gain.gain.setTargetAtTime(Math.min(0.08, 0.007 + r * r * 0.08) * (s.speed > 0.3 && s.wind !== false ? 1 : 0), t, 0.2);
+    // a rider's helmet is out in the wind
+    const exposed = this.vehicleId === 'motorbike' ? 1.8 : 1;
+    this.wind.gain.gain.setTargetAtTime(Math.min(0.08, 0.007 + r * r * 0.08) * exposed * (s.speed > 0.3 && s.wind !== false ? 1 : 0), t, 0.2);
     this.wind.filter.frequency.setTargetAtTime(300 + r * 900, t, 0.2);
     this.reverbSend.gain.setTargetAtTime(s.tunnel ? 0.7 : 0, t, 0.3);
   }
@@ -500,7 +502,7 @@ export class AudioEngine {
     this.tone(1175, { dur: 0.06, level: 0.08, type: 'sine' });
   }
 
-  /** Just for fun: the car's horn, a bike bell, a walker's whistle, a helicopter's siren or radio. */
+  /** Just for fun: the car's horn, a bike bell, a motorbike's horn or revs, a walker's whistle, a helicopter's siren or radio. */
   horn() {
     const t = this.now;
     if (t < this.hornUntil) return;
@@ -519,6 +521,19 @@ export class AudioEngine {
         this.hornUntil = t + Math.max(...honks.map(([at, dur]) => at + dur));
         return;
       }
+      case 'motorbike':
+        if ((this.model === 'cruiser' || this.model === 'dirt') && this.voice?.rev) {
+          this.voice.rev(); // vroom vroom
+          this.hornUntil = t + 0.75;
+        } else if (this.model === 'scooter') {
+          this.honk(t, 0.1, 620, 780, 0.11);
+          this.honk(t + 0.15, 0.1, 620, 780, 0.11);
+          this.hornUntil = t + 0.25;
+        } else {
+          this.honk(t, 0.3, 470, 590, 0.12);
+          this.hornUntil = t + 0.3;
+        }
+        return;
       case 'bicycle': {
         const [f, rings] = ({ road: [3300, 1], mountain: [2600, 2], city: [2050, 3] } as Record<string, [number, number]>)[this.model] ?? [2600, 2];
         for (let i = 0; i < rings; i++) this.bell(t + i * 0.16, f);
@@ -588,6 +603,8 @@ export class AudioEngine {
 interface VehicleVoice {
   update(s: EngineState, dt: number): void;
   dispose(): void;
+  /** blip the throttle, for engines */
+  rev?(): void;
 }
 
 function makeVoice(id: VehicleId, model: string, a: AudioEngine, out: AudioNode): VehicleVoice {
@@ -597,7 +614,9 @@ function makeVoice(id: VehicleId, model: string, a: AudioEngine, out: AudioNode)
     case 'bicycle':
       return new BicycleVoice(a, out, model);
     case 'car':
-      return new CarVoice(a, out, model);
+      return new EngineVoice(a, out, model, 'sedan');
+    case 'motorbike':
+      return new EngineVoice(a, out, model, 'sport');
     case 'helicopter':
       return new HelicopterVoice(a, out, model);
   }
@@ -752,152 +771,266 @@ class BicycleVoice implements VehicleVoice {
   }
 }
 
-interface CarKind {
+interface EngineKind {
+  /** when each cylinder fires, as a fraction of the four-stroke cycle (two turns of the crank) */
+  firing: number[];
+  /** how hard each firing hits, for engines whose cylinders sound unlike each other */
+  amps?: number[];
   idle: number;
-  /** rpm at the bottom of each gear, and how far it climbs before the next */
-  low: number;
-  span: number;
-  /** upper speed (m/s) of each gear, from 1 */
-  gears: number[];
-  /** firing pulses per revolution: cylinders / 2 */
-  pulses: number;
+  redline: number;
+  /** road speed (m/s) at the redline in each gear; none for a twist-and-go scooter */
+  gears?: number[];
+  /** how open the exhaust note is, and overall loudness */
   bright: number;
   level: number;
+  /** exhaust rasp: noise riding on each firing */
+  rasp: number;
+  /** air rushing into the intake under load */
+  intake: number;
+  /** pops and crackles from the exhaust when the throttle shuts at high revs */
+  crackle: number;
+  /** tyre noise: four wide tyres, or two narrow ones */
+  tyres: number;
+  diesel?: boolean;
+  turbo?: boolean;
   /** below this speed (m/s) the hybrid runs on its electric motor alone */
   electric?: number;
-  diesel?: boolean;
-  crackle?: boolean;
 }
 
-const CARS: Record<string, CarKind> = {
-  sedan: { idle: 800, low: 1300, span: 3200, gears: [0, 7, 14, 21, 28, 40], pulses: 2, bright: 1, level: 1 },
-  sports: { idle: 1000, low: 2200, span: 4800, gears: [0, 8, 14, 20, 26, 31, 40], pulses: 4, bright: 1.5, level: 1.25, crackle: true },
-  taxi: { idle: 800, low: 1300, span: 2800, gears: [0, 7, 14, 21, 28, 40], pulses: 2, bright: 0.9, level: 0.75, electric: 9 },
-  pickup: { idle: 650, low: 1000, span: 2300, gears: [0, 6, 12, 19, 26, 40], pulses: 3, bright: 0.75, level: 1.15, diesel: true },
+const even = (n: number) => Array.from({ length: n }, (_, i) => i / n);
+
+const ENGINES: Record<string, EngineKind> = {
+  // cars
+  sedan: { firing: even(4), idle: 800, redline: 6500, gears: [12, 21, 31, 45, 70], bright: 1, level: 1, rasp: 0.3, intake: 0.6, crackle: 0, tyres: 1 },
+  // a cross-plane V8: the two banks fire unevenly, which is its burble
+  sports: { firing: even(8), amps: [1, 0.7, 1, 0.8, 0.95, 0.65, 1, 0.75], idle: 950, redline: 7500, gears: [14, 23, 32, 42, 56, 75], bright: 1.4, level: 1.25, rasp: 1, intake: 0.8, crackle: 1, tyres: 1.1 },
+  taxi: { firing: even(4), idle: 800, redline: 6000, gears: [12, 21, 31, 45, 70], bright: 0.85, level: 0.75, rasp: 0.2, intake: 0.4, crackle: 0, tyres: 1, electric: 9 },
+  pickup: { firing: even(6), idle: 650, redline: 4200, gears: [9, 16, 25, 38, 55], bright: 0.7, level: 1.15, rasp: 0.6, intake: 0.5, crackle: 0, tyres: 1.2, diesel: true, turbo: true },
+  // motorbikes
+  sport: { firing: even(4), idle: 1300, redline: 14000, gears: [20, 30, 40, 50, 58, 66], bright: 1.6, level: 1.1, rasp: 0.9, intake: 1, crackle: 0.8, tyres: 0.5 },
+  // a 45 degree V-twin fires twice, 405 and 315 degrees apart: potato-potato
+  cruiser: { firing: [0, 405 / 720], idle: 850, redline: 5500, gears: [13, 21, 30, 40, 55], bright: 0.8, level: 1.3, rasp: 1, intake: 0.5, crackle: 0.5, tyres: 0.6 },
+  dirt: { firing: [0], idle: 1500, redline: 11000, gears: [12, 19, 27, 36, 46], bright: 1.2, level: 1, rasp: 1.2, intake: 0.8, crackle: 0.6, tyres: 0.6 },
+  // a two-stroke fires every turn
+  scooter: { firing: [0, 0.5], idle: 1700, redline: 9000, bright: 1.3, level: 0.75, rasp: 1.4, intake: 0.3, crackle: 0, tyres: 0.4 },
 };
 
-class CarVoice implements VehicleVoice {
-  private o1: OscillatorNode;
-  private o2: OscillatorNode;
-  private f: BiquadFilterNode;
-  private gain: GainNode;
+/** One engine cycle as a train of short pulses, one per firing, built from its harmonics. */
+function engineWave(ctx: BaseAudioContext, k: EngineKind): PeriodicWave {
+  const n = 96;
+  const real = new Float32Array(n + 1);
+  const imag = new Float32Array(n + 1);
+  const width = 0.012; // of a cycle
+  for (let h = 1; h <= n; h++) {
+    const fall = Math.exp(-((2 * Math.PI * h * width) ** 2) / 2);
+    k.firing.forEach((at, i) => {
+      const amp = (k.amps?.[i] ?? 1) * fall;
+      real[h] += amp * Math.cos(2 * Math.PI * h * at);
+      imag[h] += amp * Math.sin(2 * Math.PI * h * at);
+    });
+  }
+  return ctx.createPeriodicWave(real, imag);
+}
+
+/**
+ * A car or motorbike engine. Revs follow road speed through a gearbox: pulling hard holds each gear
+ * near the redline with a clutch dip at each change; holding a speed settles into a high gear at
+ * low revs; slowing drops a gear at a time with a blip, the engine braking with its exhaust popping.
+ */
+class EngineVoice implements VehicleVoice {
+  private osc: OscillatorNode;
+  private filter: BiquadFilterNode;
+  private body: GainNode;
+  private wobble: { lfo: OscillatorNode; depth: GainNode };
+  private rasp: ReturnType<typeof noiseLoop>;
+  private intake: ReturnType<typeof noiseLoop>;
   private rough: ReturnType<typeof noiseLoop>;
   private road: ReturnType<typeof noiseLoop>;
   private squeal: ReturnType<typeof toneLoop>;
   private squeal2: ReturnType<typeof toneLoop>;
+  private gearbox: ReturnType<typeof toneLoop>;
   private whine: ReturnType<typeof toneLoop> | null = null;
-  private clatter: { gate: OscillatorNode; noise: ReturnType<typeof noiseLoop> } | null = null;
-  private kind: CarKind;
+  private turbo: ReturnType<typeof toneLoop> | null = null;
+  private kind: EngineKind;
+  private clock = 0;
   private gear = 1;
+  private shiftLock = 0;
+  private dipUntil = 0;
+  /** extra revs from a rev-matching blip, as a share of the redline; dies away */
+  private blip = 0;
+  private rpm: number;
+  private load = 0;
+  private boost = 0;
   private lastThrottle = 0;
-  private rpm = 800;
+  /** times the rider blips the throttle for fun */
+  private revs: number[] = [];
   constructor(
     private a: AudioEngine,
     private out: AudioNode,
     model: string,
+    fallback: string,
   ) {
     const ctx = a.ctx;
-    const k = (this.kind = CARS[model] ?? CARS.sedan);
-    this.o1 = ctx.createOscillator();
-    this.o1.type = 'sawtooth';
-    this.o2 = ctx.createOscillator();
-    this.o2.type = k.diesel ? 'sawtooth' : 'square';
-    this.f = ctx.createBiquadFilter();
-    this.f.type = 'lowpass';
-    this.f.frequency.value = 300;
-    this.f.Q.value = k.crackle ? 5 : 3;
-    this.gain = ctx.createGain();
-    this.gain.gain.value = 0.07;
-    const g2 = ctx.createGain();
-    g2.gain.value = 0.5;
-    this.o1.connect(this.f);
-    this.o2.connect(g2).connect(this.f);
-    this.f.connect(this.gain).connect(out);
-    this.o1.start();
-    this.o2.start();
+    const k = (this.kind = ENGINES[model] ?? ENGINES[fallback]);
+    this.rpm = k.idle;
+    this.osc = ctx.createOscillator();
+    this.osc.setPeriodicWave(engineWave(ctx, k));
+    this.osc.frequency.value = k.idle / 120;
+    this.filter = ctx.createBiquadFilter();
+    this.filter.type = 'lowpass';
+    this.filter.Q.value = 2.5;
+    this.body = ctx.createGain();
+    this.body.gain.value = 0;
+    this.osc.connect(this.filter).connect(this.body).connect(out);
+    // a rough idle: the revs hunt a little, which smooths out once moving
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 1.7;
+    const depth = ctx.createGain();
+    depth.gain.value = 0;
+    lfo.connect(depth).connect(this.osc.detune);
+    this.wobble = { lfo, depth };
 
+    // exhaust rasp: noise that bursts with each firing (a diesel's clatter is the same, brighter)
+    this.rasp = noiseLoop(a, out, 'bandpass', k.diesel ? 2400 : 1200, k.diesel ? 2 : 1);
+    const gate = ctx.createGain();
+    gate.gain.value = 0;
+    this.rasp.f.disconnect();
+    this.rasp.f.connect(gate).connect(this.rasp.gain);
+    const gateDepth = ctx.createGain();
+    gateDepth.gain.value = 1;
+    this.osc.connect(gateDepth).connect(gate.gain);
+
+    this.intake = noiseLoop(a, out, 'bandpass', 800, 1.2);
     this.rough = noiseLoop(a, out, 'lowpass', 350);
     // tyres rolling on tarmac, rising with speed
     this.road = noiseLoop(a, out, 'bandpass', 600, 0.7);
     // two close tones beat against each other like a skidding tyre
     this.squeal = toneLoop(a, out, 1150);
     this.squeal2 = toneLoop(a, out, 1215);
+    // gears whine when the engine is braking
+    this.gearbox = toneLoop(a, out, 400);
     if (k.electric) this.whine = toneLoop(a, out, 300);
-    if (k.diesel) {
-      // diesel clatter: bright noise gated on and off at the firing rate
-      const noise = noiseLoop(a, out, 'bandpass', 2400, 2);
-      const gate = ctx.createOscillator();
-      gate.type = 'square';
-      const depth = ctx.createGain();
-      depth.gain.value = 0.5;
-      const amp = ctx.createGain();
-      amp.gain.value = 0.5;
-      noise.f.disconnect();
-      noise.f.connect(amp).connect(noise.gain);
-      gate.connect(depth).connect(amp.gain);
-      gate.start();
-      this.clatter = { gate, noise };
-    }
+    if (k.turbo) this.turbo = toneLoop(a, out, 2000);
+    this.osc.start();
+    lfo.start();
   }
-  update(s: EngineState) {
+
+  /** Two quick blips of the throttle. */
+  rev() {
+    this.revs = [this.clock, this.clock + 0.45];
+  }
+
+  update(s: EngineState, dt: number) {
     const t = this.a.now;
     const k = this.kind;
+    this.clock += dt;
+    const moving = s.speed > 0.3;
+    // held at top speed the engine only holds it, so it eases off and changes up
+    const pinned = s.throttle > 0 && s.speed >= s.maxSpeed - 0.1;
+    const revving = this.revs.some((at) => this.clock >= at && this.clock < at + 0.25);
+    this.revs = this.revs.filter((at) => this.clock < at + 0.25);
+    // how hard the engine works: foot down, holding a speed, or shut off with the engine braking
+    const want = revving ? 1 : pinned ? 0.6 : s.throttle > 0 ? 1 : s.throttle < 0 ? 0 : moving ? 0.3 : 0.12;
+    this.load += (want - this.load) * Math.min(1, dt / 0.12);
+    const L = this.load;
+
+    let rpm: number;
     const G = k.gears;
-    const top = G.length - 1;
-    let gear = 1;
-    while (gear < top && s.speed > G[gear]) gear++;
-    if (gear !== this.gear) {
-      this.gear = gear;
-      // brief dip in the engine on a gear change
-      this.gain.gain.cancelScheduledValues(t);
-      this.gain.gain.setTargetAtTime(0.03 * k.level, t, 0.01); // not a jump, which would click
+    if (!G) {
+      // a scooter's belt drive: the clutch holds the revs up while pulling away, then the speed catches up
+      const r = s.speed / s.maxSpeed;
+      rpm = moving || s.throttle > 0 ? k.idle + (k.redline - k.idle) * Math.min(1, 0.2 + 0.4 * L + 0.4 * r) : k.idle;
+    } else {
+      const inGear = (g: number) => (s.speed / G[g - 1]) * k.redline;
+      if (!moving) this.gear = 1;
+      else if (this.clock > this.shiftLock) {
+        // pulling hard holds a gear to near the redline; holding a speed changes up early
+        const pulling = s.throttle > 0 && !pinned;
+        const up = pulling ? 0.9 : 0.4;
+        // slowing changes down sooner, to brake with the engine
+        const down = s.throttle < 0 ? 0.35 : pulling ? 0.35 : 0.25;
+        if (this.gear < G.length && inGear(this.gear) > up * k.redline && (pulling || inGear(this.gear + 1) > 0.3 * k.redline)) {
+          this.gear++;
+          this.shiftLock = this.clock + 0.35;
+          if (pulling) this.dipUntil = this.clock + 0.14; // clutch in, throttle off, for a moment
+        } else if (this.gear > 1 && inGear(this.gear) < down * k.redline && inGear(this.gear - 1) < 0.75 * k.redline) {
+          this.gear--;
+          this.shiftLock = this.clock + 0.35;
+          this.blip = 0.12; // rev matching
+        }
+      }
+      // pulling away the clutch slips, so the engine runs above road speed; rolling to a stop it is
+      // pressed in, and the engine drops to idle
+      const slip = this.gear === 1 && (moving || s.throttle > 0) ? k.idle * 1.2 + 0.3 * k.redline * L : k.idle;
+      rpm = s.throttle <= 0 && s.speed < 3 ? k.idle : Math.max(slip, inGear(this.gear));
     }
-    const lo = G[gear - 1];
-    const hi = G[gear];
-    const inGear = Math.max(0, Math.min(1, (s.speed - lo) / (hi - lo)));
-    const rpm = s.speed < 0.3 ? k.idle : k.low + inGear * k.span;
-    // lifting off a sports engine at high revs pops and crackles in the exhaust
-    if (k.crackle && this.lastThrottle > 0 && s.throttle <= 0 && this.rpm > 4500) {
-      for (let i = 0; i < 5; i++) this.a.noiseBurst(this.out, t + 0.05 + Math.random() * 0.6, 0.03, 300 + Math.random() * 700, 1, 0.35 + Math.random() * 0.3);
+    if (revving) rpm = Math.max(rpm, 0.7 * k.redline);
+    rpm = Math.min(k.redline, rpm + this.blip * k.redline);
+    this.blip *= Math.exp(-dt / 0.12);
+    // the engine's own weight: revs take a moment to rise and fall
+    this.rpm += (rpm - this.rpm) * Math.min(1, dt / 0.08);
+    const rev = this.rpm / k.redline;
+
+    // a hybrid is silent but for its motor's whine until the engine joins in
+    const on = k.electric ? Math.max(0, Math.min(1, (s.speed - k.electric) / 3)) : 1;
+    const dip = this.clock < this.dipUntil ? 0.35 : 1;
+    this.osc.frequency.setTargetAtTime(this.rpm / 120, t, 0.02);
+    this.wobble.depth.gain.setTargetAtTime(moving ? 0 : 25, t, 0.3);
+    // shutting the throttle muffles the note; opening it lets the exhaust bark
+    this.filter.frequency.setTargetAtTime((180 + rev * 2600 * (0.3 + 0.7 * L)) * k.bright, t, 0.04);
+    this.body.gain.setTargetAtTime(k.level * on * dip * (0.05 + 0.07 * L + 0.04 * rev), t, dip < 1 ? 0.02 : 0.05);
+    const rasp = k.diesel ? 0.05 + 0.05 * L : 0.09 * L * (0.3 + rev);
+    this.rasp.gain.gain.setTargetAtTime(k.rasp * k.level * on * dip * rasp, t, 0.05);
+    if (!k.diesel) this.rasp.f.frequency.setTargetAtTime(900 + rev * 2200, t, 0.05);
+    this.intake.gain.gain.setTargetAtTime(k.intake * on * dip * 0.06 * L * L * rev, t, 0.05);
+    this.intake.f.frequency.setTargetAtTime(500 + rev * 2000, t, 0.05);
+
+    // lifting off at high revs pops in the exhaust, and keeps crackling while the engine brakes
+    if (k.crackle && on) {
+      if (this.lastThrottle > 0 && s.throttle <= 0 && rev > 0.55) {
+        for (let i = 0; i < Math.round(4 * k.crackle); i++) this.pop(t + 0.04 + Math.random() * 0.5);
+      } else if (L < 0.15 && rev > 0.4 && Math.random() < dt * 5 * k.crackle) {
+        this.pop(t + 0.01);
+      }
+    }
+    if (this.turbo) {
+      // the turbo spools up under load and sighs out through the blow-off valve when the throttle shuts
+      if (this.lastThrottle > 0 && s.throttle <= 0 && this.boost > 0.4) this.a.noiseBurst(this.out, t + 0.02, 0.35, 3200, 0.8, 0.3 * this.boost);
+      const spool = s.throttle > 0 ? L * Math.min(1, rev * 1.6) : 0;
+      this.boost += (spool - this.boost) * Math.min(1, dt / (spool > this.boost ? 0.5 : 0.1));
+      this.turbo.o.frequency.setTargetAtTime(1500 + this.boost * 3500, t, 0.05);
+      this.turbo.gain.gain.setTargetAtTime(0.012 * this.boost, t, 0.05);
     }
     this.lastThrottle = s.throttle;
-    this.rpm = rpm;
-    const f = (rpm / 60) * k.pulses;
-    this.o1.frequency.setTargetAtTime(f, t, 0.06);
-    this.o2.frequency.setTargetAtTime(f * 0.5 * 1.01, t, 0.06);
-    const load = s.throttle > 0 ? 1 : 0.4;
-    this.f.frequency.setTargetAtTime((200 + rpm * 0.12 * load + 200 * load) * k.bright, t, 0.08);
-    // a hybrid is silent but for its motor's whine until the engine joins in
-    const engine = k.electric ? Math.max(0, Math.min(1, (s.speed - k.electric) / 3)) : 1;
-    this.gain.gain.setTargetAtTime((0.05 + load * 0.05 + inGear * 0.02) * k.level * engine, t, 0.12);
     if (this.whine) {
       this.whine.o.frequency.setTargetAtTime(250 + s.speed * 70, t, 0.1);
-      this.whine.gain.gain.setTargetAtTime(s.speed > 0.3 ? 0.012 + load * 0.01 : 0, t, 0.1);
+      this.whine.gain.gain.setTargetAtTime(moving ? 0.012 + L * 0.01 : 0, t, 0.1);
     }
-    if (this.clatter) {
-      this.clatter.gate.frequency.setTargetAtTime(f / 2, t, 0.06);
-      this.clatter.noise.gain.gain.setTargetAtTime(0.03 + load * 0.03, t, 0.1);
-    }
+    this.gearbox.o.frequency.setTargetAtTime((this.rpm / 60) * 2.7, t, 0.05);
+    this.gearbox.gain.gain.setTargetAtTime(G && s.throttle < 0 && s.speed > 3 ? 0.005 : 0, t, 0.1);
+
     const r = s.speed / s.maxSpeed;
-    this.road.gain.gain.setTargetAtTime(s.surface === 'paved' && s.speed > 0.5 ? 0.02 + r * 0.07 : 0, t, 0.15);
+    this.road.gain.gain.setTargetAtTime(s.surface === 'paved' && s.speed > 0.5 ? (0.02 + r * 0.07) * k.tyres : 0, t, 0.15);
     this.road.f.frequency.setTargetAtTime(400 + r * 800, t, 0.15);
     this.rough.gain.gain.setTargetAtTime(s.surface !== 'paved' && s.speed > 0.5 ? 0.15 + Math.min(0.2, s.speed / 40) : 0, t, 0.1);
-    const squeal = s.brake && s.speed > 8 && s.surface === 'paved' ? 0.015 + r * 0.03 : 0;
+    const squeal = s.brake && s.speed > 8 && s.surface === 'paved' ? (0.015 + r * 0.03) * Math.min(1, k.tyres) : 0;
     this.squeal.gain.gain.setTargetAtTime(squeal, t, squeal ? 0.04 : 0.03);
     this.squeal2.gain.gain.setTargetAtTime(squeal * 0.8, t, squeal ? 0.04 : 0.03);
   }
+
+  private pop(when: number) {
+    const low = this.kind.firing.length <= 2; // big twins and singles bang lower
+    this.a.noiseBurst(this.out, when, 0.03, (low ? 200 : 350) + Math.random() * 600, 1, (0.3 + Math.random() * 0.3) * this.kind.level);
+  }
+
   dispose() {
-    const gains = [this.gain, this.rough.gain, this.road.gain, this.squeal.gain, this.squeal2.gain];
-    const srcs: AudioScheduledSourceNode[] = [this.o1, this.o2, this.rough.src, this.road.src, this.squeal.o, this.squeal2.o];
-    if (this.whine) {
-      gains.push(this.whine.gain);
-      srcs.push(this.whine.o);
-    }
-    if (this.clatter) {
-      gains.push(this.clatter.noise.gain);
-      srcs.push(this.clatter.noise.src, this.clatter.gate);
-    }
-    fadeOut(this.a, gains, srcs);
+    const loops = [this.rasp, this.intake, this.rough, this.road];
+    const tones = [this.squeal, this.squeal2, this.gearbox, ...(this.whine ? [this.whine] : []), ...(this.turbo ? [this.turbo] : [])];
+    fadeOut(
+      this.a,
+      [this.body, ...loops.map((l) => l.gain), ...tones.map((x) => x.gain)],
+      [this.osc, this.wobble.lfo, ...loops.map((l) => l.src), ...tones.map((x) => x.o)],
+    );
   }
 }
 

@@ -6,7 +6,7 @@ import { validate } from './backup';
 
 export type SpeechMode = 'screenreader' | 'voice';
 export type Units = 'metric' | 'imperial';
-export type VehicleId = 'walker' | 'bicycle' | 'car' | 'helicopter';
+export type VehicleId = 'walker' | 'bicycle' | 'car' | 'motorbike' | 'helicopter';
 /** high contrast with larger text, roads and markers (the default), or the standard map look */
 export type DisplayMode = 'highContrast' | 'standard';
 /** walking routes: shortest (any footpath) or along streets and their pavements */
