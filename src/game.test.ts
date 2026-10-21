@@ -1310,16 +1310,15 @@ describe('phone screen', () => {
     vi.mocked(fetchCountry).mockResolvedValueOnce('us').mockResolvedValueOnce('in');
     const { g } = setup();
     g.onUnits = (u: string) => units.push(u);
-    await g.learnCountry({ lat: 40.1, lon: -88.2 });
+    await g.autoUnits({ lat: 40.1, lon: -88.2 });
     expect(g.settings.units).toBe('imperial');
-    await g.learnCountry({ lat: 18.9, lon: 72.8 });
+    await g.autoUnits({ lat: 18.9, lon: 72.8 });
     expect(g.settings.units).toBe('metric');
     expect(units).toEqual(['imperial', 'metric']);
     g.settings.unitsChosen = true;
     vi.mocked(fetchCountry).mockResolvedValueOnce('us');
-    await g.learnCountry({ lat: 40.1, lon: -88.2 });
+    await g.autoUnits({ lat: 40.1, lon: -88.2 });
     expect(g.settings.units).toBe('metric');
-    expect(g.country).toBe('us'); // still known, for the signal watch
   });
 });
 
@@ -1535,32 +1534,6 @@ describe('crossing advice', () => {
     g.announcedHazards.clear();
     g.checkAtCrossing();
     expect(said).toHaveLength(1);
-  });
-
-  it('adds the signal watch reminder only at a signal crossing', () => {
-    const { game, g, said } = setup();
-    game.signalHint = () => 'The signal watch is off.';
-    g.world.addPlaces({
-      places: [],
-      signals: new Set<number>(),
-      crossings: [
-        { ...ll(0, 52), text: 'Crossing with signals', extras: [] },
-        { ...ll(0, 500), text: 'Pedestrian crossing', extras: [] },
-      ],
-    });
-    g.speed = 0;
-    g.checkAtCrossing();
-    expect(said.at(-1)).toMatch(/^At the signal crossing\..* The signal watch is off\.$/);
-    g.y = 500;
-    g.checkAtCrossing();
-    expect(said.at(-1)).not.toMatch(/signal watch/);
-  });
-
-  it('finds the nearest mapped signal crossing', () => {
-    const { game, g } = setup();
-    g.world.addPlaces({ places: [], signals: new Set<number>(), crossings: [{ ...ll(0, 70), text: 'Crossing with signals', extras: [] }] });
-    expect(game.signalCrossingWithin(40)).toBeCloseTo(20, 0);
-    expect(game.signalCrossingWithin(10)).toBeNull();
   });
 });
 

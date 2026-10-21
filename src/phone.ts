@@ -50,8 +50,6 @@ export interface PhoneHooks {
   toggleBeacon(): string;
   /** turn on turn by turn, and keep the screen awake */
   guide(): void;
-  /** start or stop watching the camera for a crossing signal; returns whether it is on */
-  toggleSignal(): Promise<boolean>;
 }
 
 /** The beacon button's label. */
@@ -212,10 +210,6 @@ export class Phone {
     this.el('ph-ahead').addEventListener('click', () => this.action('lookAhead'));
     this.el('ph-shake').addEventListener('click', () => (this.el('ph-shake').textContent = this.hooks.toggleShake()));
     this.el('ph-beacon').addEventListener('click', () => (this.el('ph-beacon').textContent = this.hooks.toggleBeacon()));
-    this.el('ph-signal').addEventListener('click', async () => {
-      const b = this.el('ph-signal');
-      b.setAttribute('aria-pressed', String(await this.hooks.toggleSignal()));
-    });
     this.el('ph-nearby').addEventListener('click', () => this.openNearby());
     const kinds = this.el('ph-near-kinds');
     for (const [group, label] of NEAR_KINDS) {

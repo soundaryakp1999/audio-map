@@ -300,7 +300,7 @@ export class Game {
   onJump?: () => void;
   onNote?: () => void;
   onOsmNote?: (at: LatLon) => void;
-  /** units changed to suit the country (see learnCountry) */
+  /** units changed to suit the country (see autoUnits) */
   onUnits?: (u: 'metric' | 'imperial') => void;
   /** played on a touch screen: leave out keyboard hints */
   touch = false;
@@ -372,7 +372,7 @@ export class Game {
     }
 
     this.speech.say(`${liveOff ? 'Live GPS off. ' : ''}Loading map data${placeName ? ` for ${placeName}` : ''}. Please wait.`, 'high');
-    void this.learnCountry(center);
+    void this.autoUnits(center);
     await this.firstLoad();
   }
 
@@ -423,13 +423,10 @@ export class Game {
     );
   }
 
-  /** Two-letter code (lower case) of the country being explored, once known. */
-  country: string | null = null;
-
-  /** Find the country; units follow it (imperial in the United States, metric elsewhere) until the player picks them in settings. */
-  private async learnCountry(center: LatLon) {
+  /** Units by country, until the player picks them in settings: imperial in the United States, metric elsewhere. */
+  private async autoUnits(center: LatLon) {
+    if (this.settings.unitsChosen) return;
     const cc = await fetchCountry(center);
-    if (cc) this.country = cc;
     if (!cc || this.settings.unitsChosen) return;
     const units = IMPERIAL_COUNTRIES.has(cc) ? 'imperial' : 'metric';
     if (units === this.settings.units) return;
@@ -1656,15 +1653,6 @@ export class Game {
     return `${cap(compass8(heading))}: ${items.length ? items.join('. ') : `nothing mapped within ${fmtDistance(reach, u)}`}.`;
   }
 
-  /** Words added at the kerb of a signal crossing, e.g. a reminder that the signal watch is off; set by the page. */
-  signalHint: () => string = () => '';
-
-  /** Distance in metres to the nearest mapped crossing with signals within `r`, or null. */
-  signalCrossingWithin(r: number): number | null {
-    const near = this.world?.hazardsNear(this.x, this.y, r).filter((n) => n.hazard.text === 'Crossing with signals') ?? [];
-    return near.length ? Math.min(...near.map((n) => n.d)) : null;
-  }
-
   /** Standing at a crossing: what to wait for before stepping out, said once. */
   private checkAtCrossing() {
     if (!this.settings.announceHazards || this.vehicle.id !== 'walker' || this.speed > 0.5) return;
@@ -1674,8 +1662,7 @@ export class Game {
     const key = `at|${Math.round(h.x)},${Math.round(h.y)}`;
     if (this.clock - (this.announcedHazards.get(key) ?? -1e9) < 120) return;
     this.announcedHazards.set(key, this.clock);
-    const hint = h.text === 'Crossing with signals' ? this.signalHint() : '';
-    this.speech.say(`${crossingAdvice(h.text, h.extras ?? [])}${hint ? ` ${hint}` : ''}`, 'high');
+    this.speech.say(crossingAdvice(h.text, h.extras ?? []), 'high');
   }
 
   /** Crossings and steps just ahead, for walkers and cyclists. */
