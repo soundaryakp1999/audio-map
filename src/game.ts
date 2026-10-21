@@ -23,7 +23,7 @@ import { extrasWanted, junctionQuiet, nextProfile, placeTier, placeWanted, PROFI
 import { Speech } from './speech';
 import { addCrossings, maneuverText, ordinal, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions, type StreetCrossing } from './router';
 import { fetchOnlineRoute, hasOnlineRouting } from './onlineRouter';
-import { VEHICLES, modelFor, nextModel, roadHalfWidth, type VehicleProfile } from './vehicles';
+import { VEHICLES, isMotor, modelFor, nextModel, roadHalfWidth, type VehicleProfile } from './vehicles';
 import { conditionsReport, isDark } from './weather';
 import { departuresReport, transitous } from './transit';
 import { byTierThenDistance, matchTier } from './search';
@@ -76,6 +76,7 @@ const CORRIDOR: Record<VehicleId, { max: number; types: string }> = {
   walker: { max: 5000, types: HIGHWAYS },
   bicycle: { max: 10000, types: HIGHWAYS.replace('motorway|motorway_link|', '') },
   car: { max: 15000, types: CAR_ROADS },
+  motorbike: { max: 15000, types: CAR_ROADS },
   helicopter: { max: 0, types: '' },
 };
 const ROUGH = new Set(['gravel', 'dirt', 'unpaved', 'ground', 'grass', 'sand', 'cobblestone', 'sett', 'compacted', 'fine_gravel', 'mud', 'pebblestone', 'wood']);
@@ -993,7 +994,7 @@ export class Game {
         const extras: string[] = [];
         if (this.road?.bridge) extras.push('bridge');
         if (this.road?.tunnel) extras.push('tunnel');
-        if (this.road?.oneway && this.vehicle.id === 'car') extras.push('one way');
+        if (this.road?.oneway && isMotor(this.vehicle.id)) extras.push('one way');
         this.audio.streetChange();
         const pr = this.vehicle.id === 'helicopter' ? 'low' : 'normal';
         this.speech.say([this.streetName, ...extras].join(', '), pr);
@@ -1017,7 +1018,7 @@ export class Game {
 
   private updateRumble() {
     const v = this.vehicle.id;
-    if ((v !== 'car' && v !== 'bicycle') || this.speed < 0.5 || !this.world) {
+    if ((!isMotor(v) && v !== 'bicycle') || this.speed < 0.5 || !this.world) {
       this.audio.setRumble(0, 0, 10);
       return;
     }
@@ -1779,7 +1780,7 @@ export class Game {
   }
 
   private get arriveRadius() {
-    return this.vehicle.id === 'helicopter' ? 60 : this.vehicle.id === 'car' ? 25 : 12;
+    return this.vehicle.id === 'helicopter' ? 60 : isMotor(this.vehicle.id) ? 25 : 12;
   }
 
   private updateDestination() {
@@ -1823,6 +1824,7 @@ export class Game {
     const canUse = this.vehicle.canUse;
     switch (this.vehicle.id) {
       case 'car':
+      case 'motorbike':
         return {
           canUse,
           obeyOneway: true,
@@ -2608,6 +2610,7 @@ export class Game {
       case 'walker':
       case 'bicycle':
       case 'car':
+      case 'motorbike':
       case 'helicopter':
         return action === this.vehicle.id ? this.cycleModel() : this.setVehicle(action, true);
       case 'horn':
@@ -2668,7 +2671,7 @@ export class Game {
         'H heading, S speed, L location, Shift L live GPS: your real position and compass move you, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
         'F3 grid mode: arrows step north, south, west and east with a sound for the ground, minus and equals change the step, Space says where you are. ' +
         'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. ' + `${this.keyText('navigate')} searches for a destination. ` + 'D says the distance to go, D twice switches walking routes between shortest and streets only, ' + `${this.keyText('turnByTurn')} toggles turn by turn directions,` + ' I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it, Control V reports a wrong or missing road or place to OpenStreetMap. Z copies a link to this spot and route, Shift Z saves the route as a GPX file, Shift S saves the map here for offline use. U says how the trip went. E says where you are with the nearest landmark and stop, and the way back to the route if you have left it. Shift E turns look around on: stand still, hold the phone flat and point it a way to hear what lies there. Shift I says what lies ahead, the way you are walking. Shift M opens the destination in your maps app for its directions. Control right bracket hears places from farther, Control left bracket from nearer. Shift K says your address and shares your location as a map link. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. Shift X says the nearest entrances, platforms and lifts, Shift O the nearest toilets, bench, drinking water, shelter, post box and cash machine. Shift T reads the next departures when you stand at a stop, using the open Transitous feed, which covers much of Europe, North America and Australia. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. Control Shift P opens the command palette: type to find any action. ' +
-        '1 to 4 change vehicle; the same number again changes its model, which looks and sounds different. J sounds the horn, bell or whistle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. Sound themes are chosen in settings or from the command palette. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
+        '1 to 5 change vehicle: walker, bicycle, car, helicopter, motorbike; the same number again changes its model, which looks and sounds different. J sounds the horn, bell or whistle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. Sound themes are chosen in settings or from the command palette. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
     );
@@ -3903,7 +3906,7 @@ export class Game {
 
   /** Time for a distance at the current speed, or a typical speed for the vehicle when stopped. */
   private etaText(left: number): string {
-    const typical = { walker: 1.3, bicycle: 4.5, car: 9, helicopter: 50 }[this.vehicle.id];
+    const typical = { walker: 1.3, bicycle: 4.5, car: 9, motorbike: 9, helicopter: 50 }[this.vehicle.id];
     const minutes = Math.max(1, Math.round(left / (this.speed > 0.5 ? this.speed : typical) / 60));
     return minutesText(minutes);
   }
@@ -4117,7 +4120,7 @@ export class Game {
     const nodes = w.nodesNear(this.x, this.y, 25).filter((n) => w.isIntersection(n, this.filter));
     nodes.sort((a, b) => dist(this.x, this.y, a.x, a.y) - dist(this.x, this.y, b.x, b.y));
     if (nodes[0]) {
-      const obeysOneway = this.vehicle.id === 'car';
+      const obeysOneway = isMotor(this.vehicle.id);
       for (const { from, edge } of w.junction(nodes[0], this.filter, this.junctionRadius).exits) {
         if (obeysOneway && edge.way.oneway && edge.fwd === edge.way.onewayReverse) continue; // can't drive in against it
         options.push({ b: w.edgeBearing(from, edge), name: edge.way.name });

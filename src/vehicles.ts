@@ -87,6 +87,21 @@ export const VEHICLES: Record<VehicleId, VehicleProfile> = {
     canUse: (w) => DRIVABLE.has(w.type),
     roadFilter: (w) => DRIVABLE.has(w.type) && notDriveway(w) && (w.type !== 'service' || w.named),
   },
+  motorbike: {
+    id: 'motorbike',
+    name: 'Motorbike',
+    maxSpeed: 36,
+    accel: 4.5,
+    decel: 4,
+    brake: 9,
+    turnRate: 55,
+    offRoadMax: 5,
+    loadRadius: 1800,
+    passRadius: 40,
+    scanRadius: 400,
+    canUse: (w) => DRIVABLE.has(w.type),
+    roadFilter: (w) => DRIVABLE.has(w.type) && notDriveway(w) && (w.type !== 'service' || w.named),
+  },
   helicopter: {
     id: 'helicopter',
     name: 'Helicopter',
@@ -103,6 +118,9 @@ export const VEHICLES: Record<VehicleId, VehicleProfile> = {
     roadFilter: (w) => MAJOR.has(w.type),
   },
 };
+
+/** Drives on the roads with traffic: keeps to one-way streets and takes motorways. */
+export const isMotor = (id: VehicleId) => id === 'car' || id === 'motorbike';
 
 /** Half width of a road for edge / off-road detection, metres. */
 export function roadHalfWidth(type: string): number {
@@ -160,6 +178,12 @@ export const VEHICLE_MODELS: Record<VehicleId, VehicleModel[]> = {
     { id: 'sports', name: 'Sports car', body: '#e53935', trim: '#ffffff' },
     { id: 'taxi', name: 'Taxi', body: '#fdd835', trim: '#212121' },
     { id: 'pickup', name: 'Pickup truck', body: '#607d8b', trim: '#37474f' },
+  ],
+  motorbike: [
+    { id: 'sport', name: 'Sport bike', body: '#e53935', trim: '#212121' },
+    { id: 'cruiser', name: 'Cruiser', body: '#212121', trim: '#cfd8dc' },
+    { id: 'dirt', name: 'Dirt bike', body: '#ff9800', trim: '#fafafa' },
+    { id: 'scooter', name: 'Scooter', body: '#26a69a', trim: '#eceff1' },
   ],
   helicopter: [
     { id: 'tour', name: 'Tour helicopter', body: '#1e88e5', trim: '#ffffff' },

@@ -40,7 +40,7 @@ const STEPS: Step[] = [
   { say: 'Press Tab to browse a nearby place, then Enter to set it as your destination.', seq: ['Tab', 'Enter'], ok: hasDest, hint: 'No destination was set. Press Tab to pick a place, then Enter.' },
   { say: 'Press D to hear the distance to your destination.', seq: ['KeyD'], ok: hasDest, hint: 'You need a destination first. Press Tab, then Enter.' },
   { say: 'Press I for the next turn-by-turn instruction.', seq: ['KeyI'], ok: hasDest, hint: 'You need a destination first. Press Tab, then Enter.' },
-  { say: 'Press 1, 2, 3 or 4 to change vehicle.', seq: ['Digit1', 'Digit2', 'Digit3', 'Digit4'], any: true, ok: (a, s) => s.vehicle !== a.vehicle, hint: 'The vehicle did not change. Press a different number.' },
+  { say: 'Press 1, 2, 3, 4 or 5 to change vehicle.', seq: ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'], any: true, ok: (a, s) => s.vehicle !== a.vehicle, hint: 'The vehicle did not change. Press a different number.' },
   { say: 'Press Escape to open the menu.', seq: ['Escape'] },
 ];
 

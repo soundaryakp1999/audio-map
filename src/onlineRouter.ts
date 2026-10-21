@@ -5,11 +5,13 @@
 import { bearing, dist, relAngle, type LatLon, type Projection } from './geo';
 import { pointAlong, type Maneuver, type Route, type RoutePoint } from './router';
 import type { VehicleId } from './settings';
+import { isMotor } from './vehicles';
 
 const BASE: Partial<Record<VehicleId, string>> = {
   walker: 'https://routing.openstreetmap.de/routed-foot/route/v1/foot',
   bicycle: 'https://routing.openstreetmap.de/routed-bike/route/v1/bike',
   car: 'https://routing.openstreetmap.de/routed-car/route/v1/driving',
+  motorbike: 'https://routing.openstreetmap.de/routed-car/route/v1/driving',
 };
 const VALHALLA = 'https://valhalla1.openstreetmap.de/route';
 const TIMEOUT_MS = 12_000;
@@ -69,8 +71,8 @@ export async function fetchOnlineRoute(
 async function osrm(base: string, vehicle: VehicleId, a: LatLon, b: LatLon, heading: number, signal?: AbortSignal): Promise<OsrmResponse | null> {
   const coords = `${a.lon.toFixed(6)},${a.lat.toFixed(6)};${b.lon.toFixed(6)},${b.lat.toFixed(6)}`;
   const url = `${base}/${coords}?overview=full&geometries=geojson&steps=true`;
-  // cars should set off the way they are facing; fall back to no preference if that can't be matched
-  const tries = vehicle === 'car' ? [`${url}&bearings=${Math.round(heading)},90;`, url] : [url];
+  // cars and motorbikes should set off the way they are facing; fall back to no preference if that can't be matched
+  const tries = isMotor(vehicle) ? [`${url}&bearings=${Math.round(heading)},90;`, url] : [url];
   let json: OsrmResponse | null = null;
   for (const u of tries) {
     const sig = signal ? AbortSignal.any([signal, AbortSignal.timeout(TIMEOUT_MS)]) : AbortSignal.timeout(TIMEOUT_MS);
@@ -169,7 +171,7 @@ function buildRoute(
       nameAt = pointAlong(draft, k);
       nameDir = dirAt(draft, k);
       const along = nameNear(nameAt.x, nameAt.y, nameDir);
-      name = along ? `path along ${along}` : vehicle === 'car' ? 'road' : 'path';
+      name = along ? `path along ${along}` : isMotor(vehicle) ? 'road' : 'path';
     }
     const from = { fromName: currentRaw, fromAt: pointAlong(draft, d - 15), fromDir: dirAt(draft, d - 15) };
 
