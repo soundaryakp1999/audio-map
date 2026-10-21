@@ -23,7 +23,7 @@ import { extrasWanted, junctionQuiet, nextProfile, placeTier, placeWanted, PROFI
 import { Speech } from './speech';
 import { addCrossings, maneuverText, ordinal, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions, type StreetCrossing } from './router';
 import { fetchOnlineRoute, hasOnlineRouting } from './onlineRouter';
-import { VEHICLES, roadHalfWidth, type VehicleProfile } from './vehicles';
+import { VEHICLES, modelFor, nextModel, roadHalfWidth, type VehicleProfile } from './vehicles';
 import { conditionsReport, isDark } from './weather';
 import { departuresReport, transitous } from './transit';
 import { byTierThenDistance, matchTier } from './search';
@@ -362,6 +362,7 @@ export class Game {
     this.map.resetTrail();
     this.map.setDestination(null);
     this.audio.setVehicle(this.vehicle.id);
+    this.showVehicle();
     this.audio.resume();
     this.paused = false;
     if (!this.running) {
@@ -680,6 +681,7 @@ export class Game {
     saveSettings(this.settings);
     this.speed = Math.min(this.speed, this.vehicle.maxSpeed);
     this.audio.setVehicle(id);
+    this.showVehicle();
     if (this.dest && this.world) {
       if (this.settings.turnByTurn && id !== 'helicopter') void this.computeRoute(announce);
       else this.clearRoute();
@@ -689,6 +691,19 @@ export class Game {
       this.speech.say(`${this.vehicle.name}. Top speed ${fmtSpeedShort(this.vehicle.maxSpeed, this.settings.units)}.${this.settings.soundProfile === before ? '' : ` ${PROFILE_TEXT[this.settings.soundProfile]}`}`, 'high');
     }
     if (this.proj && this.vehicle.loadRadius > prevRadius && !this.loading) void this.load(false);
+  }
+
+  private showVehicle() {
+    this.map.setVehicle(this.vehicle.id, modelFor(this.vehicle.id, this.settings.vehicleModels));
+  }
+
+  /** The same vehicle's key again changes only how it looks on the map. */
+  private cycleModel() {
+    const m = nextModel(this.vehicle.id, this.settings.vehicleModels);
+    this.settings.vehicleModels = { ...this.settings.vehicleModels, [this.vehicle.id]: m.id };
+    saveSettings(this.settings);
+    this.showVehicle();
+    this.speech.say(`${m.name}.`, 'high');
   }
 
   // ---------------- loop ----------------
@@ -2588,7 +2603,7 @@ export class Game {
       case 'bicycle':
       case 'car':
       case 'helicopter':
-        return this.setVehicle(action, true);
+        return action === this.vehicle.id ? this.cycleModel() : this.setVehicle(action, true);
       case 'volumeUp':
       case 'volumeDown': {
         const v = Math.max(0, Math.min(1, this.settings.volume + (action === 'volumeUp' ? 0.1 : -0.1)));
@@ -2645,7 +2660,7 @@ export class Game {
         'H heading, S speed, L location, Shift L live GPS: your real position and compass move you, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
         'F3 grid mode: arrows step north, south, west and east with a sound for the ground, minus and equals change the step, Space says where you are. ' +
         'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. ' + `${this.keyText('navigate')} searches for a destination. ` + 'D says the distance to go, D twice switches walking routes between shortest and streets only, ' + `${this.keyText('turnByTurn')} toggles turn by turn directions,` + ' I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it, Control V reports a wrong or missing road or place to OpenStreetMap. Z copies a link to this spot and route, Shift Z saves the route as a GPX file, Shift S saves the map here for offline use. U says how the trip went. E says where you are with the nearest landmark and stop, and the way back to the route if you have left it. Shift E turns look around on: stand still, hold the phone flat and point it a way to hear what lies there. Shift I says what lies ahead, the way you are walking. Shift M opens the destination in your maps app for its directions. Control right bracket hears places from farther, Control left bracket from nearer. Shift K says your address and shares your location as a map link. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. Shift X says the nearest entrances, platforms and lifts, Shift O the nearest toilets, bench, drinking water, shelter, post box and cash machine. Shift T reads the next departures when you stand at a stop, using the open Transitous feed, which covers much of Europe, North America and Australia. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. Control Shift P opens the command palette: type to find any action. ' +
-        '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. Sound themes are chosen in settings or from the command palette. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
+        '1 to 4 change vehicle; the same number again changes how it looks on the map. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. Sound themes are chosen in settings or from the command palette. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
     );

@@ -133,3 +133,49 @@ export function roadHalfWidth(type: string): number {
       return 2;
   }
 }
+
+/** A look for a vehicle on the visual map; models change nothing but the drawing. */
+export interface VehicleModel {
+  id: string;
+  name: string;
+  /** main paint or clothing colour */
+  body: string;
+  /** stripe, trim, roof or second colour */
+  trim: string;
+}
+
+export const VEHICLE_MODELS: Record<VehicleId, VehicleModel[]> = {
+  walker: [
+    { id: 'blue', name: 'Blue jacket', body: '#1e88e5', trim: '#0d47a1' },
+    { id: 'red', name: 'Red jacket', body: '#e53935', trim: '#7f0000' },
+    { id: 'green', name: 'Green hiker', body: '#43a047', trim: '#8d6e63' },
+  ],
+  bicycle: [
+    { id: 'road', name: 'Road bike', body: '#e53935', trim: '#212121' },
+    { id: 'mountain', name: 'Mountain bike', body: '#43a047', trim: '#ff9800' },
+    { id: 'city', name: 'City bike', body: '#1e88e5', trim: '#795548' },
+  ],
+  car: [
+    { id: 'sedan', name: 'Sedan', body: '#1e88e5', trim: '#0d47a1' },
+    { id: 'sports', name: 'Sports car', body: '#e53935', trim: '#ffffff' },
+    { id: 'taxi', name: 'Taxi', body: '#fdd835', trim: '#212121' },
+    { id: 'pickup', name: 'Pickup truck', body: '#607d8b', trim: '#37474f' },
+  ],
+  helicopter: [
+    { id: 'tour', name: 'Tour helicopter', body: '#1e88e5', trim: '#ffffff' },
+    { id: 'rescue', name: 'Rescue helicopter', body: '#e53935', trim: '#ffffff' },
+    { id: 'news', name: 'News helicopter', body: '#fafafa', trim: '#ff6f00' },
+  ],
+};
+
+/** The chosen model for a vehicle, falling back to its first. */
+export function modelFor(vehicle: VehicleId, chosen: Partial<Record<VehicleId, string>>): VehicleModel {
+  const list = VEHICLE_MODELS[vehicle];
+  return list.find((m) => m.id === chosen[vehicle]) ?? list[0];
+}
+
+/** The model after the chosen one, wrapping round. */
+export function nextModel(vehicle: VehicleId, chosen: Partial<Record<VehicleId, string>>): VehicleModel {
+  const list = VEHICLE_MODELS[vehicle];
+  return list[(list.indexOf(modelFor(vehicle, chosen)) + 1) % list.length];
+}
