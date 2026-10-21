@@ -1,33 +1,53 @@
 import { describe, expect, it } from 'vitest';
-import { CONFIRM, Confirmer, styleWarning } from './signal';
+import { LOST_MS, SignalTracker, styleWarning, type SignalState } from './signal';
 
-describe('Confirmer', () => {
-  const feed = (c: Confirmer, states: Parameters<Confirmer['add']>[0][]) => states.map((s) => c.add(s));
+describe('SignalTracker', () => {
+  // one reading a second unless times are given
+  const feed = (c: SignalTracker, states: SignalState[], t0 = 0) => states.map((s, i) => c.add(s, t0 + i * 1000));
 
-  it(`changes state only after ${CONFIRM} matching readings`, () => {
-    const c = new Confirmer();
-    expect(feed(c, ['walk', 'walk', 'walk'])).toEqual([null, null, 'walk']);
-    expect(c.state).toBe('walk');
+  it('sounds and says a walk on its first reading', () => {
+    const c = new SignalTracker();
+    expect(c.add('walk', 0)).toEqual({ state: 'walk', say: true });
   });
-  it('ignores one odd reading', () => {
-    const c = new Confirmer();
-    feed(c, ['walk', 'walk', 'walk']);
-    expect(feed(c, ['dontWalk', 'walk', 'walk'])).toEqual([null, null, null]);
-    expect(c.state).toBe('walk');
+  it('switches straight back when the next reading differs', () => {
+    const c = new SignalTracker();
+    expect(feed(c, ['walk', 'dontWalk', 'walk'])).toEqual([
+      { state: 'walk', say: true },
+      { state: 'dontWalk', say: true },
+      { state: 'walk', say: true },
+    ]);
   });
   it('does not repeat a state it already holds', () => {
-    const c = new Confirmer();
-    feed(c, ['dontWalk', 'dontWalk', 'dontWalk']);
-    expect(feed(c, ['dontWalk', 'dontWalk'])).toEqual([null, null]);
+    const c = new SignalTracker();
+    expect(feed(c, ['dontWalk', 'dontWalk'])).toEqual([{ state: 'dontWalk', say: true }, null]);
   });
-  it('goes quiet after the signal is lost for a while', () => {
-    const c = new Confirmer();
-    feed(c, ['walk', 'walk', 'walk']);
-    expect(feed(c, ['none', 'none', 'none'])).toEqual([null, null, 'none']);
+  it('stops the walk sound at once when walk is no longer seen, without saying lost', () => {
+    const c = new SignalTracker();
+    expect(feed(c, ['walk', 'none'])).toEqual([{ state: 'walk', say: true }, { state: 'none', say: false }]);
+    // seen again: sounded, but not said again
+    expect(c.add('walk', 2000)).toEqual({ state: 'walk', say: false });
   });
-  it('restarts the count when the readings disagree', () => {
-    const c = new Confirmer();
-    expect(feed(c, ['walk', 'walk', 'dontWalk', 'walk', 'walk', 'walk'])).toEqual([null, null, null, null, null, 'walk']);
+  it("holds don't walk through a flashing hand", () => {
+    const c = new SignalTracker();
+    expect(feed(c, ['dontWalk', 'none', 'dontWalk', 'none', 'none', 'dontWalk'])).toEqual([{ state: 'dontWalk', say: true }, null, null, null, null, null]);
+    expect(c.state).toBe('dontWalk');
+  });
+  it('says lost only after no signal for a while', () => {
+    const c = new SignalTracker();
+    c.add('dontWalk', 0);
+    expect(c.add('none', LOST_MS - 1)).toBeNull();
+    expect(c.add('none', LOST_MS)).toEqual({ state: 'none', say: true });
+    expect(c.add('none', LOST_MS + 1000)).toBeNull();
+  });
+  it('says lost after a walk that went quiet', () => {
+    const c = new SignalTracker();
+    feed(c, ['walk', 'none']);
+    expect(c.add('none', LOST_MS)).toEqual({ state: 'none', say: true });
+  });
+  it('has nothing to lose before any signal is seen', () => {
+    const c = new SignalTracker();
+    expect(feed(c, ['none', 'none'], 0)).toEqual([null, null]);
+    expect(c.add('none', LOST_MS * 2)).toBeNull();
   });
 });
 
