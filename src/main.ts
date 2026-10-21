@@ -23,7 +23,7 @@ import { setupRebind } from './rebind';
 import { setupTouch } from './touch';
 import { setupVoice } from './voice';
 import { postOsmNote } from './osmnotes';
-import { Phone, isPhone } from './phone';
+import { Phone, beaconText, isPhone } from './phone';
 import { requestCompass } from './gps';
 import { requestMotion, startShake } from './shake';
 import { SignalWatcher, styleWarning } from './signal';
@@ -308,6 +308,7 @@ function applyShake() {
   });
 }
 const shakeLabel = () => `Shake for address: ${settings.shake ? 'on' : 'off'}`;
+const beaconLabel = () => beaconText(settings.beaconSound);
 const voiceLabel = () => (settings.speechMode === 'voice' ? 'Speech: built-in voice' : 'Speech: screen reader');
 let signal: SignalWatcher | null = null;
 let signalModel: SignalModel | null = null;
@@ -385,6 +386,12 @@ const phone = new Phone($('phone'), () => game, {
     speech.say(settings.shake ? 'Shake the phone to hear where you are.' : 'Shake is off.', 'high');
     return shakeLabel();
   },
+  beaconLabel,
+  toggleBeacon: () => {
+    update({ beaconSound: !settings.beaconSound });
+    speech.say(settings.beaconSound ? 'Beacon sound on.' : 'Beacon sound off. Directions and turn cues carry on.', 'high');
+    return beaconLabel();
+  },
   toggleSignal: async () => {
     if (!signal) return startSignal();
     stopSignal();
@@ -392,7 +399,8 @@ const phone = new Phone($('phone'), () => game, {
     return false;
   },
   guide: () => {
-    if (!settings.turnByTurn || !settings.beaconSound) update({ turnByTurn: true, beaconSound: true });
+    // the beacon stays as chosen: some walk by the directions alone
+    if (!settings.turnByTurn) update({ turnByTurn: true });
     void keepAwake();
     const act = (id: ActionId) => {
       const b = game?.keyFor(id);

@@ -17,6 +17,7 @@ export const SQUARES = [10, 20, 50];
 export interface PhoneGame {
   readonly pose: { x: number; y: number; heading: number; live: boolean; ready: boolean; loadFailed: boolean; mapVersion: number; units: Units };
   readonly hasDestination: boolean;
+  readonly beaconOn: boolean;
   describeAt(x: number, y: number): Promise<{ text: string; sound: AreaSound; named: boolean } | null>;
   hoodAt(x: number, y: number): Promise<string | null>;
   areaCue(sound: AreaSound): void;
@@ -44,11 +45,17 @@ export interface PhoneHooks {
   shakeLabel(): string;
   /** turn shake-for-address on or off; returns the button's new label */
   toggleShake(): string;
-  /** turn on turn by turn and the beacon, and keep the screen awake */
+  beaconLabel(): string;
+  /** turn the destination beacon sound on or off; returns the button's new label */
+  toggleBeacon(): string;
+  /** turn on turn by turn, and keep the screen awake */
   guide(): void;
   /** start or stop watching the camera for a crossing signal; returns whether it is on */
   toggleSignal(): Promise<boolean>;
 }
+
+/** The beacon button's label. */
+export const beaconText = (on: boolean) => `Beacon sound: ${on ? 'on' : 'off'}`;
 
 /** The kinds of place the Nearby list can show. */
 const NEAR_KINDS: [PlaceGroup | null, string][] = [
@@ -204,6 +211,7 @@ export class Phone {
     this.el('ph-look').addEventListener('click', () => this.action('lookAround'));
     this.el('ph-ahead').addEventListener('click', () => this.action('lookAhead'));
     this.el('ph-shake').addEventListener('click', () => (this.el('ph-shake').textContent = this.hooks.toggleShake()));
+    this.el('ph-beacon').addEventListener('click', () => (this.el('ph-beacon').textContent = this.hooks.toggleBeacon()));
     this.el('ph-signal').addEventListener('click', async () => {
       const b = this.el('ph-signal');
       b.setAttribute('aria-pressed', String(await this.hooks.toggleSignal()));
@@ -318,6 +326,7 @@ export class Phone {
     this.root.classList.remove('welcome');
     this.el('ph-voice').textContent = this.hooks.voiceLabel();
     this.el('ph-shake').textContent = this.hooks.shakeLabel();
+    this.el('ph-beacon').textContent = this.hooks.beaconLabel();
     this.chosen = null; // a fresh start: squares were chosen on the last map
     this.select(-1);
     this.setMode(mode, false);
@@ -405,6 +414,9 @@ export class Phone {
     const dirs = travel ? g.directionsText() || (g.hasDestination ? '' : 'Choose a destination: tap Where to.') : 'Exploring. Touch the map, or pan with the buttons.';
     const d = this.el('ph-dirs');
     if (dirs && d.textContent !== dirs) d.textContent = dirs;
+    // B or a voice command can change the beacon too
+    const beacon = beaconText(g.beaconOn);
+    if (this.el('ph-beacon').textContent !== beacon) this.el('ph-beacon').textContent = beacon;
     this.showSteps();
   }
 
@@ -523,7 +535,7 @@ export class Phone {
       this.started = true;
       this.hooks.guide();
       g.startLive(); // from this tap, so iOS can ask for the compass
-      g.announce('Starting. The directions are at the top of the screen; follow the beacon. The map turns with you.');
+      g.announce(`Starting. The directions are at the top of the screen${g.beaconOn ? '; follow the beacon' : ''}. The map turns with you.`);
     });
   }
 
