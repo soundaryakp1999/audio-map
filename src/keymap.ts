@@ -75,6 +75,7 @@ export const DEFAULT_KEYS = {
   bicycle: [k('2')],
   car: [k('3')],
   helicopter: [k('4')],
+  horn: [k('j')],
   volumeUp: [k('PageUp')],
   volumeDown: [k('PageDown')],
   stopSpeech: [k('Control')],

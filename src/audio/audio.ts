@@ -13,6 +13,8 @@ export interface EngineState {
   tunnel: boolean;
   /** false when you are really moving (live GPS): the air around you is real, so no wind sound */
   wind?: boolean;
+  /** the brake key is held, not just easing off: tyres and brakes squeal */
+  brake?: boolean;
 }
 
 const GROUP_PITCH: Record<PlaceGroup, number> = {
@@ -33,6 +35,8 @@ export class AudioEngine {
   readonly noise: AudioBuffer;
   private voice: VehicleVoice | null = null;
   private vehicleId: VehicleId | null = null;
+  private model = '';
+  private hornUntil = 0;
   private engineOn = true;
   private wind: { src: AudioBufferSourceNode; gain: GainNode; filter: BiquadFilterNode };
   private rumble: { gain: GainNode; pan: StereoPannerNode; trem: OscillatorNode; filter: BiquadFilterNode };
@@ -143,10 +147,12 @@ export class AudioEngine {
     this.theme = t;
   }
 
-  setVehicle(id: VehicleId) {
+  /** model: a VehicleModel id; each model has its own engine, tyres or footsteps */
+  setVehicle(id: VehicleId, model = '') {
     this.vehicleId = id;
+    this.model = model;
     this.voice?.dispose();
-    this.voice = this.engineOn ? makeVoice(id, this, this.bed) : null;
+    this.voice = this.engineOn ? makeVoice(id, model, this, this.bed) : null;
   }
 
   /** Off while the vehicle is parked (grid mode): its engine, rotor or footsteps fall silent until switched back on. */
@@ -154,7 +160,7 @@ export class AudioEngine {
     if (on === this.engineOn) return;
     this.engineOn = on;
     this.voice?.dispose();
-    this.voice = on && this.vehicleId ? makeVoice(this.vehicleId, this, this.bed) : null;
+    this.voice = on && this.vehicleId ? makeVoice(this.vehicleId, this.model, this, this.bed) : null;
   }
 
   update(s: EngineState, dt: number) {
@@ -493,6 +499,88 @@ export class AudioEngine {
   streetChange() {
     this.tone(1175, { dur: 0.06, level: 0.08, type: 'sine' });
   }
+
+  /** Just for fun: the car's horn, a bike bell, a walker's whistle, a helicopter's siren or radio. */
+  horn() {
+    const t = this.now;
+    if (t < this.hornUntil) return;
+    switch (this.vehicleId) {
+      case 'car': {
+        // first and second note, level, then [start, length] of each honk
+        const [f1, f2, level, honks] =
+          (
+            {
+              sports: [523, 659, 0.13, [[0, 0.11], [0.17, 0.11]]],
+              taxi: [440, 554, 0.13, [[0, 0.12], [0.18, 0.12], [0.36, 0.4]]],
+              pickup: [311, 392, 0.17, [[0, 0.75]]],
+            } as Record<string, [number, number, number, number[][]]>
+          )[this.model] ?? [415, 523, 0.14, [[0, 0.45]]];
+        for (const [at, dur] of honks) this.honk(t + at, dur, f1, f2, level);
+        this.hornUntil = t + Math.max(...honks.map(([at, dur]) => at + dur));
+        return;
+      }
+      case 'bicycle': {
+        const [f, rings] = ({ road: [3300, 1], mountain: [2600, 2], city: [2050, 3] } as Record<string, [number, number]>)[this.model] ?? [2600, 2];
+        for (let i = 0; i < rings; i++) this.bell(t + i * 0.16, f);
+        this.hornUntil = t + rings * 0.16;
+        return;
+      }
+      case 'helicopter':
+        if (this.model === 'rescue') {
+          // two-tone siren
+          for (let i = 0; i < 4; i++) this.honk(t + i * 0.32, 0.3, i % 2 ? 700 : 940, i % 2 ? 702 : 942, 0.11);
+          this.hornUntil = t + 1.28;
+        } else {
+          // the pilot's radio: a crackle of squelch, then a roger beep
+          this.noiseBurst(this.master, t, 0.18, 2000, 0.5, 0.35);
+          this.tone(1000, { when: t + 0.2, dur: 0.08, level: 0.12, type: 'square' });
+          this.tone(1300, { when: t + 0.29, dur: 0.1, level: 0.12, type: 'square' });
+          this.hornUntil = t + 0.4;
+        }
+        return;
+      default:
+        if (this.model === 'green') {
+          // sports whistle: a fast trill
+          for (let i = 0; i < 10; i++) this.tone(i % 2 ? 2900 : 2650, { when: t + i * 0.035, dur: 0.05, level: 0.1 });
+          this.hornUntil = t + 0.4;
+        } else {
+          // a whistle to get attention: up, then down
+          this.tone(1800, { dur: 0.14, level: 0.12, glideTo: 2700 });
+          this.tone(2700, { when: t + 0.18, dur: 0.26, level: 0.12, glideTo: 1900 });
+          this.hornUntil = t + 0.45;
+        }
+    }
+  }
+
+  /** A car horn: two buzzy notes together, held for dur. */
+  private honk(when: number, dur: number, f1: number, f2: number, level: number) {
+    const ctx = this.ctx;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 2200;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, when);
+    g.gain.linearRampToValueAtTime(level, when + 0.015);
+    g.gain.setValueAtTime(level, when + dur - 0.03);
+    g.gain.linearRampToValueAtTime(0, when + dur);
+    lp.connect(g).connect(this.master);
+    for (const f of [f1, f2]) {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.value = f;
+      o.connect(lp);
+      o.start(when);
+      o.stop(when + dur + 0.02);
+    }
+  }
+
+  /** A bicycle bell: a struck metal dome, its overtones out of tune with each other. */
+  private bell(when: number, f: number) {
+    this.tone(f, { when, dur: 0.6, level: 0.13 });
+    this.tone(f * 2.76, { when, dur: 0.35, level: 0.06 });
+    this.tone(f * 5.4, { when, dur: 0.15, level: 0.03 });
+    this.noiseBurst(this.master, when, 0.01, 6000, 2, 0.15);
+  }
 }
 
 // ---------- vehicle voices ----------
@@ -502,17 +590,45 @@ interface VehicleVoice {
   dispose(): void;
 }
 
-function makeVoice(id: VehicleId, a: AudioEngine, out: AudioNode): VehicleVoice {
+function makeVoice(id: VehicleId, model: string, a: AudioEngine, out: AudioNode): VehicleVoice {
   switch (id) {
     case 'walker':
-      return new WalkerVoice(a, out);
+      return new WalkerVoice(a, out, model);
     case 'bicycle':
-      return new BicycleVoice(a, out);
+      return new BicycleVoice(a, out, model);
     case 'car':
-      return new CarVoice(a, out);
+      return new CarVoice(a, out, model);
     case 'helicopter':
-      return new HelicopterVoice(a, out);
+      return new HelicopterVoice(a, out, model);
   }
+}
+
+/** A looping noise source through a filter into a silent gain, for sounds that fade in and out. */
+function noiseLoop(a: AudioEngine, out: AudioNode, type: BiquadFilterType, freq: number, q = 1) {
+  const ctx = a.ctx;
+  const src = ctx.createBufferSource();
+  src.buffer = a.noise;
+  src.loop = true;
+  const f = ctx.createBiquadFilter();
+  f.type = type;
+  f.frequency.value = freq;
+  f.Q.value = q;
+  const gain = ctx.createGain();
+  gain.gain.value = 0;
+  src.connect(f).connect(gain).connect(out);
+  src.start(a.now, Math.random() * 1.5);
+  return { src, f, gain };
+}
+
+/** A sine that is silent until its gain is raised: brake squeal, electric whine. */
+function toneLoop(a: AudioEngine, out: AudioNode, freq: number) {
+  const o = a.ctx.createOscillator();
+  o.frequency.value = freq;
+  const gain = a.ctx.createGain();
+  gain.gain.value = 0;
+  o.connect(gain).connect(out);
+  o.start();
+  return { o, gain };
 }
 
 class WalkerVoice implements VehicleVoice {
@@ -522,6 +638,7 @@ class WalkerVoice implements VehicleVoice {
   constructor(
     private a: AudioEngine,
     out: AudioNode,
+    private model: string,
   ) {
     this.pan = [-0.25, 0.25].map((v) => {
       const p = a.ctx.createStereoPanner();
@@ -542,12 +659,21 @@ class WalkerVoice implements VehicleVoice {
       this.foot ^= 1;
       const when = this.a.now + 0.01;
       const dest = this.pan[this.foot];
-      const run = s.speed > 2.2 ? 1.4 : 1;
+      const boots = this.model === 'green';
+      const run = (s.speed > 2.2 ? 1.4 : 1) * (boots ? 1.25 : 1);
       if (s.surface === 'offroad') {
         this.a.noiseBurst(dest, when, 0.12, 700, 0.8, 0.35 * run); // grass / dirt
       } else if (s.surface === 'rough') {
         this.a.noiseBurst(dest, when, 0.09, 1500, 0.7, 0.4 * run); // gravel crunch
         this.a.noiseBurst(dest, when + 0.02, 0.06, 3000, 1, 0.2 * run);
+      } else if (boots) {
+        // heavy heel thud, then the sole scuffing
+        this.a.tone(120, { when, dur: 0.07, level: 0.16, type: 'sine', glideTo: 70, dest });
+        this.a.noiseBurst(dest, when, 0.07, 1100, 1.2, 0.45 * run);
+        this.a.noiseBurst(dest, when + 0.08, 0.05, 1900, 1.5, 0.2 * run);
+      } else if (this.model === 'red') {
+        this.a.noiseBurst(dest, when, 0.06, 900, 1.2, 0.35 * run); // soft trainer sole
+        this.a.noiseBurst(dest, when + 0.06, 0.03, 1700, 2, 0.1 * run);
       } else {
         this.a.noiseBurst(dest, when, 0.05, 1800, 2.5, 0.45 * run); // heel
         this.a.noiseBurst(dest, when + 0.07, 0.04, 2600, 3, 0.2 * run); // toe
@@ -559,68 +685,127 @@ class WalkerVoice implements VehicleVoice {
   }
 }
 
+const BIKES: Record<string, { tyre: number; tyreFreq: number; tick: number; tickFreq: number; squeal: number }> = {
+  road: { tyre: 0.7, tyreFreq: 1.4, tick: 1.4, tickFreq: 5200, squeal: 2300 },
+  mountain: { tyre: 1.4, tyreFreq: 0.8, tick: 0.8, tickFreq: 3800, squeal: 3100 },
+  city: { tyre: 1, tyreFreq: 1, tick: 0.6, tickFreq: 3300, squeal: 1900 },
+};
+
 class BicycleVoice implements VehicleVoice {
-  private tire: { src: AudioBufferSourceNode; gain: GainNode; f: BiquadFilterNode };
+  private tire: ReturnType<typeof noiseLoop>;
+  private squeal: ReturnType<typeof toneLoop>;
+  private kind: (typeof BIKES)[string];
   private tickPhase = 0;
+  private pedalPhase = 0;
+  private gear = 0;
   constructor(
     private a: AudioEngine,
     private out: AudioNode,
+    private model: string,
   ) {
-    const ctx = a.ctx;
-    const src = ctx.createBufferSource();
-    src.buffer = a.noise;
-    src.loop = true;
-    const f = ctx.createBiquadFilter();
-    f.type = 'lowpass';
-    f.frequency.value = 400;
-    const gain = ctx.createGain();
-    gain.gain.value = 0;
-    src.connect(f).connect(gain).connect(out);
-    src.start();
-    this.tire = { src, gain, f };
+    this.kind = BIKES[model] ?? BIKES.road;
+    this.tire = noiseLoop(a, out, 'lowpass', 400);
+    this.squeal = toneLoop(a, out, this.kind.squeal);
   }
   update(s: EngineState, dt: number) {
     const t = this.a.now;
+    const k = this.kind;
     const r = s.speed / s.maxSpeed;
     const rough = s.surface !== 'paved' ? 2 : 1;
-    this.tire.gain.gain.setTargetAtTime(s.speed > 0.2 ? (0.05 + r * 0.2) * rough : 0, t, 0.1);
-    this.tire.f.frequency.setTargetAtTime(250 + r * 700 * rough, t, 0.1);
+    this.tire.gain.gain.setTargetAtTime(s.speed > 0.2 ? (0.05 + r * 0.2) * rough * k.tyre : 0, t, 0.1);
+    this.tire.f.frequency.setTargetAtTime((250 + r * 700 * rough) * k.tyreFreq, t, 0.1);
     // freewheel ticking while coasting
     if (s.throttle <= 0 && s.speed > 0.5) {
-      this.tickPhase += dt * (4 + s.speed * 3);
+      this.tickPhase += dt * (4 + s.speed * 3) * k.tick;
       if (this.tickPhase >= 1) {
         this.tickPhase -= 1;
-        this.a.noiseBurst(this.out, t + 0.005, 0.015, 4500, 6, 0.18);
+        this.a.noiseBurst(this.out, t + 0.005, 0.015, k.tickFreq, 6, 0.18);
       }
+    }
+    // chain running over the sprockets, once per pedal stroke
+    if (s.throttle > 0 && s.speed > 0.5) {
+      this.pedalPhase += dt * (1.6 + r * 1.4);
+      if (this.pedalPhase >= 1) {
+        this.pedalPhase -= 1;
+        this.a.noiseBurst(this.out, t + 0.005, 0.08, 1500, 3, 0.07);
+      }
+    }
+    // the derailleur clicks as you speed up or slow down through the gears
+    const gear = Math.min(5, Math.floor(r * 6));
+    if (gear !== this.gear) {
+      if (s.speed > 0.5) {
+        this.a.noiseBurst(this.out, t + 0.005, 0.02, 6000, 10, 0.22);
+        this.a.noiseBurst(this.out, t + 0.04, 0.02, 4500, 10, 0.16);
+      }
+      this.gear = gear;
+    }
+    // rim or disc brakes squeal under hard braking
+    const squeal = s.brake && s.speed > 1.5 ? 0.012 + r * 0.03 : 0;
+    this.squeal.gain.gain.setTargetAtTime(squeal, t, squeal ? 0.05 : 0.03);
+    // a loose mudguard or knobbly tyres rattle on rough ground
+    if (rough > 1 && s.speed > 1 && this.model !== 'road' && Math.random() < dt * 6) {
+      this.a.noiseBurst(this.out, t + 0.005, 0.03, 2600, 8, 0.12);
     }
   }
   dispose() {
-    this.tire.src.stop();
-    this.tire.gain.disconnect();
+    fadeOut(this.a, [this.tire.gain, this.squeal.gain], [this.tire.src, this.squeal.o]);
   }
 }
+
+interface CarKind {
+  idle: number;
+  /** rpm at the bottom of each gear, and how far it climbs before the next */
+  low: number;
+  span: number;
+  /** upper speed (m/s) of each gear, from 1 */
+  gears: number[];
+  /** firing pulses per revolution: cylinders / 2 */
+  pulses: number;
+  bright: number;
+  level: number;
+  /** below this speed (m/s) the hybrid runs on its electric motor alone */
+  electric?: number;
+  diesel?: boolean;
+  crackle?: boolean;
+}
+
+const CARS: Record<string, CarKind> = {
+  sedan: { idle: 800, low: 1300, span: 3200, gears: [0, 7, 14, 21, 28, 40], pulses: 2, bright: 1, level: 1 },
+  sports: { idle: 1000, low: 2200, span: 4800, gears: [0, 8, 14, 20, 26, 31, 40], pulses: 4, bright: 1.5, level: 1.25, crackle: true },
+  taxi: { idle: 800, low: 1300, span: 2800, gears: [0, 7, 14, 21, 28, 40], pulses: 2, bright: 0.9, level: 0.75, electric: 9 },
+  pickup: { idle: 650, low: 1000, span: 2300, gears: [0, 6, 12, 19, 26, 40], pulses: 3, bright: 0.75, level: 1.15, diesel: true },
+};
 
 class CarVoice implements VehicleVoice {
   private o1: OscillatorNode;
   private o2: OscillatorNode;
   private f: BiquadFilterNode;
   private gain: GainNode;
-  private rough: { src: AudioBufferSourceNode; gain: GainNode };
+  private rough: ReturnType<typeof noiseLoop>;
+  private road: ReturnType<typeof noiseLoop>;
+  private squeal: ReturnType<typeof toneLoop>;
+  private squeal2: ReturnType<typeof toneLoop>;
+  private whine: ReturnType<typeof toneLoop> | null = null;
+  private clatter: { gate: OscillatorNode; noise: ReturnType<typeof noiseLoop> } | null = null;
+  private kind: CarKind;
   private gear = 1;
-  private static readonly GEARS = [0, 7, 14, 21, 28, 40]; // upper speed (m/s) for gears 1..5
+  private lastThrottle = 0;
+  private rpm = 800;
   constructor(
     private a: AudioEngine,
-    out: AudioNode,
+    private out: AudioNode,
+    model: string,
   ) {
     const ctx = a.ctx;
+    const k = (this.kind = CARS[model] ?? CARS.sedan);
     this.o1 = ctx.createOscillator();
     this.o1.type = 'sawtooth';
     this.o2 = ctx.createOscillator();
-    this.o2.type = 'square';
+    this.o2.type = k.diesel ? 'sawtooth' : 'square';
     this.f = ctx.createBiquadFilter();
     this.f.type = 'lowpass';
     this.f.frequency.value = 300;
-    this.f.Q.value = 3;
+    this.f.Q.value = k.crackle ? 5 : 3;
     this.gain = ctx.createGain();
     this.gain.gain.value = 0.07;
     const g2 = ctx.createGain();
@@ -631,91 +816,164 @@ class CarVoice implements VehicleVoice {
     this.o1.start();
     this.o2.start();
 
-    const src = ctx.createBufferSource();
-    src.buffer = a.noise;
-    src.loop = true;
-    const rf = ctx.createBiquadFilter();
-    rf.type = 'lowpass';
-    rf.frequency.value = 350;
-    const rg = ctx.createGain();
-    rg.gain.value = 0;
-    src.connect(rf).connect(rg).connect(out);
-    src.start();
-    this.rough = { src, gain: rg };
+    this.rough = noiseLoop(a, out, 'lowpass', 350);
+    // tyres rolling on tarmac, rising with speed
+    this.road = noiseLoop(a, out, 'bandpass', 600, 0.7);
+    // two close tones beat against each other like a skidding tyre
+    this.squeal = toneLoop(a, out, 1150);
+    this.squeal2 = toneLoop(a, out, 1215);
+    if (k.electric) this.whine = toneLoop(a, out, 300);
+    if (k.diesel) {
+      // diesel clatter: bright noise gated on and off at the firing rate
+      const noise = noiseLoop(a, out, 'bandpass', 2400, 2);
+      const gate = ctx.createOscillator();
+      gate.type = 'square';
+      const depth = ctx.createGain();
+      depth.gain.value = 0.5;
+      const amp = ctx.createGain();
+      amp.gain.value = 0.5;
+      noise.f.disconnect();
+      noise.f.connect(amp).connect(noise.gain);
+      gate.connect(depth).connect(amp.gain);
+      gate.start();
+      this.clatter = { gate, noise };
+    }
   }
   update(s: EngineState) {
     const t = this.a.now;
-    const G = CarVoice.GEARS;
+    const k = this.kind;
+    const G = k.gears;
+    const top = G.length - 1;
     let gear = 1;
-    while (gear < 5 && s.speed > G[gear]) gear++;
+    while (gear < top && s.speed > G[gear]) gear++;
     if (gear !== this.gear) {
       this.gear = gear;
       // brief dip in the engine on a gear change
       this.gain.gain.cancelScheduledValues(t);
-      this.gain.gain.setTargetAtTime(0.03, t, 0.01); // not a jump, which would click
+      this.gain.gain.setTargetAtTime(0.03 * k.level, t, 0.01); // not a jump, which would click
     }
     const lo = G[gear - 1];
     const hi = G[gear];
     const inGear = Math.max(0, Math.min(1, (s.speed - lo) / (hi - lo)));
-    const rpm = s.speed < 0.3 ? 800 : 1300 + inGear * 3200; // idle 800
-    const f = (rpm / 60) * 2; // 4-cylinder firing frequency
+    const rpm = s.speed < 0.3 ? k.idle : k.low + inGear * k.span;
+    // lifting off a sports engine at high revs pops and crackles in the exhaust
+    if (k.crackle && this.lastThrottle > 0 && s.throttle <= 0 && this.rpm > 4500) {
+      for (let i = 0; i < 5; i++) this.a.noiseBurst(this.out, t + 0.05 + Math.random() * 0.6, 0.03, 300 + Math.random() * 700, 1, 0.35 + Math.random() * 0.3);
+    }
+    this.lastThrottle = s.throttle;
+    this.rpm = rpm;
+    const f = (rpm / 60) * k.pulses;
     this.o1.frequency.setTargetAtTime(f, t, 0.06);
     this.o2.frequency.setTargetAtTime(f * 0.5 * 1.01, t, 0.06);
     const load = s.throttle > 0 ? 1 : 0.4;
-    this.f.frequency.setTargetAtTime(200 + rpm * 0.12 * load + 200 * load, t, 0.08);
-    this.gain.gain.setTargetAtTime(0.05 + load * 0.05 + inGear * 0.02, t, 0.12);
+    this.f.frequency.setTargetAtTime((200 + rpm * 0.12 * load + 200 * load) * k.bright, t, 0.08);
+    // a hybrid is silent but for its motor's whine until the engine joins in
+    const engine = k.electric ? Math.max(0, Math.min(1, (s.speed - k.electric) / 3)) : 1;
+    this.gain.gain.setTargetAtTime((0.05 + load * 0.05 + inGear * 0.02) * k.level * engine, t, 0.12);
+    if (this.whine) {
+      this.whine.o.frequency.setTargetAtTime(250 + s.speed * 70, t, 0.1);
+      this.whine.gain.gain.setTargetAtTime(s.speed > 0.3 ? 0.012 + load * 0.01 : 0, t, 0.1);
+    }
+    if (this.clatter) {
+      this.clatter.gate.frequency.setTargetAtTime(f / 2, t, 0.06);
+      this.clatter.noise.gain.gain.setTargetAtTime(0.03 + load * 0.03, t, 0.1);
+    }
+    const r = s.speed / s.maxSpeed;
+    this.road.gain.gain.setTargetAtTime(s.surface === 'paved' && s.speed > 0.5 ? 0.02 + r * 0.07 : 0, t, 0.15);
+    this.road.f.frequency.setTargetAtTime(400 + r * 800, t, 0.15);
     this.rough.gain.gain.setTargetAtTime(s.surface !== 'paved' && s.speed > 0.5 ? 0.15 + Math.min(0.2, s.speed / 40) : 0, t, 0.1);
+    const squeal = s.brake && s.speed > 8 && s.surface === 'paved' ? 0.015 + r * 0.03 : 0;
+    this.squeal.gain.gain.setTargetAtTime(squeal, t, squeal ? 0.04 : 0.03);
+    this.squeal2.gain.gain.setTargetAtTime(squeal * 0.8, t, squeal ? 0.04 : 0.03);
   }
   dispose() {
-    fadeOut(this.a, [this.gain, this.rough.gain], [this.o1, this.o2, this.rough.src]);
+    const gains = [this.gain, this.rough.gain, this.road.gain, this.squeal.gain, this.squeal2.gain];
+    const srcs: AudioScheduledSourceNode[] = [this.o1, this.o2, this.rough.src, this.road.src, this.squeal.o, this.squeal2.o];
+    if (this.whine) {
+      gains.push(this.whine.gain);
+      srcs.push(this.whine.o);
+    }
+    if (this.clatter) {
+      gains.push(this.clatter.noise.gain);
+      srcs.push(this.clatter.noise.src, this.clatter.gate);
+    }
+    fadeOut(this.a, gains, srcs);
   }
 }
+
+const HELICOPTERS: Record<string, { rate: number; body: number; thump: number; whine: number; level: number }> = {
+  tour: { rate: 5, body: 350, thump: 55, whine: 1400, level: 1 },
+  rescue: { rate: 4, body: 260, thump: 42, whine: 1100, level: 1.25 },
+  news: { rate: 6.5, body: 550, thump: 70, whine: 1900, level: 0.85 },
+};
 
 class HelicopterVoice implements VehicleVoice {
   private lfo: OscillatorNode;
   private whine: OscillatorNode;
+  private thump: OscillatorNode;
   private src: AudioBufferSourceNode;
-  private nodes: AudioNode[] = [];
+  private depth: GainNode;
+  private nodes: GainNode[] = [];
+  private kind: (typeof HELICOPTERS)[string];
   constructor(
     private a: AudioEngine,
     out: AudioNode,
+    model: string,
   ) {
     const ctx = a.ctx;
+    const k = (this.kind = HELICOPTERS[model] ?? HELICOPTERS.tour);
     const src = (this.src = ctx.createBufferSource());
     src.buffer = a.noise;
     src.loop = true;
     const f = ctx.createBiquadFilter();
     f.type = 'lowpass';
-    f.frequency.value = 350;
+    f.frequency.value = k.body;
     const chop = ctx.createGain();
-    chop.gain.value = 0.15;
+    chop.gain.value = 0.06 * k.level;
+    // each blade passing is a sharp pulse rather than a smooth wobble: a sum of equal harmonics
     this.lfo = ctx.createOscillator();
-    this.lfo.type = 'sawtooth';
-    this.lfo.frequency.value = 5;
-    const depth = ctx.createGain();
-    depth.gain.value = 0.14;
-    this.lfo.connect(depth).connect(chop.gain);
+    const harmonics = 10;
+    this.lfo.setPeriodicWave(ctx.createPeriodicWave(new Float32Array(harmonics + 1).fill(1), new Float32Array(harmonics + 1)));
+    this.lfo.frequency.value = k.rate;
+    this.depth = ctx.createGain();
+    this.depth.gain.value = 0.22 * k.level;
+    this.lfo.connect(this.depth).connect(chop.gain);
     src.connect(f).connect(chop).connect(out);
     src.start();
     this.lfo.start();
 
+    // the low thud of the blades, beating in time with the chop
+    this.thump = ctx.createOscillator();
+    this.thump.frequency.value = k.thump;
+    const tg = ctx.createGain();
+    tg.gain.value = 0;
+    const td = ctx.createGain();
+    td.gain.value = 0.18 * k.level;
+    this.lfo.connect(td).connect(tg.gain);
+    this.thump.connect(tg).connect(out);
+    this.thump.start();
+
     this.whine = ctx.createOscillator();
     this.whine.type = 'sine';
-    this.whine.frequency.value = 1400;
+    this.whine.frequency.value = k.whine;
     const wg = ctx.createGain();
-    wg.gain.value = 0.015;
+    wg.gain.value = 0.015 * k.level;
     this.whine.connect(wg).connect(out);
     this.whine.start();
-    this.nodes.push(chop, wg);
+    this.nodes.push(chop, tg, wg);
   }
   update(s: EngineState) {
     const t = this.a.now;
+    const k = this.kind;
     const r = s.speed / s.maxSpeed;
-    this.lfo.frequency.setTargetAtTime(5 + r * 2.5 + (s.throttle > 0 ? 0.6 : 0), t, 0.3);
-    this.whine.frequency.setTargetAtTime(1400 + r * 300, t, 0.3);
+    const pulling = s.throttle > 0;
+    this.lfo.frequency.setTargetAtTime(k.rate * (1 + r * 0.5) + (pulling ? 0.6 : 0), t, 0.3);
+    // blades bite harder when pulling away
+    this.depth.gain.setTargetAtTime((pulling ? 0.3 : 0.22) * k.level, t, 0.3);
+    this.whine.frequency.setTargetAtTime(k.whine * (1 + r * 0.2), t, 0.3);
   }
   dispose() {
-    fadeOut(this.a, this.nodes as GainNode[], [this.src, this.lfo, this.whine]);
+    fadeOut(this.a, this.nodes, [this.src, this.lfo, this.whine, this.thump]);
   }
 }
 

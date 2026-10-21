@@ -79,6 +79,7 @@ export const ACTIONS: Action[] = [
   a('Bicycle', 'bicycle'),
   a('Car', 'car'),
   a('Helicopter', 'helicopter'),
+  a('Horn, bell or whistle', 'horn'),
   a('Toggle road assist', 'roadAssist'),
   a('Toggle accessible walking routes', 'accessibleRoute'),
   a('Toggle place announcements', 'announcePlaces'),
