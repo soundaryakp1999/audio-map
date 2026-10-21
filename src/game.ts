@@ -3595,6 +3595,10 @@ export class Game {
     return !!this.dest;
   }
 
+  get beaconOn(): boolean {
+    return this.settings.beaconSound;
+  }
+
   /** The next turn-by-turn instruction as text, for the phone's directions panel; '' without a destination. */
   directionsText(): string {
     const dest = this.dest;

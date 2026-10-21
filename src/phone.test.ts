@@ -119,6 +119,7 @@ describe('Phone screen', () => {
     const game = {
       pose: { x: 0, y: 0, heading: 0, live: true, ready: true, loadFailed: false, mapVersion: 0, units: 'metric', ...pose },
       hasDestination: false,
+      beaconOn: true,
       describeAt: vi.fn(async (x: number, y: number) => ({ text: `Spot ${Math.round(x)} ${Math.round(y)}`, sound: 'road', named: true })),
       streetUp: (h: number) => ({ dir: h }),
       directionsText: () => '',
@@ -146,6 +147,15 @@ describe('Phone screen', () => {
     expect(el('ph-dest').textContent).toBe('Set as destination: Spot 0 60');
     el('ph-dest').click();
     expect(game.setTarget).toHaveBeenCalledWith({ name: 'Spot 0 60', x: 0, y: 60 });
+  });
+
+  it('keeps the beacon button in step with the beacon, however it was switched', () => {
+    const { phone, game, el } = screen();
+    phone.tick();
+    expect(el('ph-beacon').textContent).toBe('Beacon sound: on');
+    game.beaconOn = false; // B, a voice command or the settings
+    phone.tick();
+    expect(el('ph-beacon').textContent).toBe('Beacon sound: off');
   });
 
   it('describes the squares again when a map arrives, though the view has not moved', async () => {
