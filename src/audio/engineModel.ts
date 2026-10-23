@@ -1,8 +1,9 @@
 // A physically informed combustion engine: cylinders, valves and pipes as a network of digital
 // waveguides, after Baldan, Lachambre, Delle Monache and Boussard, "Physically informed car engine
-// sound synthesis for virtual and augmented environments" (2015), and Antonio-R1's MIT-licensed
-// engine-sound-generator (Copyright (c) 2021-2022 Antonio-R1). Pure DSP with no Web Audio, so it
+// sound synthesis for virtual and augmented environments" (2015). Pure DSP with no Web Audio, so it
 // runs inside an AudioWorklet and in tests alike.
+
+/*! Waveguide engine design after engine-sound-generator, Copyright (c) 2021-2022 Antonio-R1, MIT License: https://github.com/Antonio-R1/engine-sound-generator/blob/main/LICENSE (full text in THIRD_PARTY_NOTICES.md) */
 
 /** The build of one engine: its cylinders and the pipes they breathe through. */
 export interface EngineShape {
