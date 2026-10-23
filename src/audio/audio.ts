@@ -5,6 +5,8 @@ import type { PlaceGroup } from '../world';
 import type { VehicleId } from '../settings';
 import { CUES, THEMES, type CueTune, type SoundTheme } from './themes';
 import { powertrainFor, type EngineReading } from '../drivetrain';
+import { ENGINE_PARAMS, SHAPES, type EngineShape } from './engineModel';
+import engineWorkletUrl from './engineWorklet.ts?worker&url';
 
 export interface EngineState {
   speed: number;
@@ -36,6 +38,8 @@ export class AudioEngine {
   private master: GainNode;
   private bed: GainNode; // continuous sounds, ducked under speech
   readonly noise: AudioBuffer;
+  /** resolves true once the modelled engine's worklet is loaded, false where it cannot be */
+  readonly engineModule: Promise<boolean>;
   private voice: VehicleVoice | null = null;
   private vehicleId: VehicleId | null = null;
   private model = '';
@@ -80,6 +84,7 @@ export class AudioEngine {
     this.bed.connect(this.master);
 
     this.noise = makeNoise(ctx);
+    this.engineModule = ctx.audioWorklet ? ctx.audioWorklet.addModule(engineWorkletUrl).then(() => true, () => false) : Promise.resolve(false);
 
     // tunnel reverb
     this.reverb = ctx.createConvolver();
@@ -776,105 +781,80 @@ class BicycleVoice implements VehicleVoice {
 
 /** How an engine sounds; how it pulls and changes gear is its Powertrain. */
 interface EngineKind {
-  /** when each cylinder fires, as a fraction of the four-stroke cycle (two turns of the crank) */
-  firing: number[];
-  /** how hard each firing hits, for engines whose cylinders sound unlike each other */
-  amps?: number[];
+  /** cylinders, valves and pipes for the modelled engine */
+  shape: EngineShape;
   /** how open the exhaust note is, and overall loudness */
   bright: number;
   level: number;
-  /** exhaust rasp: noise riding on each firing */
-  rasp: number;
-  /** air rushing into the intake under load */
-  intake: number;
   /** pops and crackles from the exhaust when the throttle shuts at high revs */
   crackle: number;
   /** tyre noise: four wide tyres, or two narrow ones */
   tyres: number;
-  /** the exhaust's own resonances (Hz): the revs swell as they sweep through them */
-  pipes: [number, number];
-  /** seconds on the starter before it catches */
+  /** seconds on the starter before it catches; 0 for a hybrid, whose motor spins the engine up */
   crank: number;
-  diesel?: boolean;
+  /** cranking speed: a big diesel turns over slowly */
+  crankRpm: number;
   turbo?: boolean;
   /** below this speed (m/s) the hybrid runs on its electric motor alone */
   electric?: number;
 }
 
-const even = (n: number) => Array.from({ length: n }, (_, i) => i / n);
-
 const ENGINES: Record<string, EngineKind> = {
   // cars
-  sedan: { firing: even(4), bright: 1, level: 1, rasp: 0.3, intake: 0.6, crackle: 0, tyres: 1, pipes: [115, 520], crank: 0.55 },
-  // a cross-plane V8: the two banks fire unevenly, which is its burble
-  sports: { firing: even(8), amps: [1, 0.7, 1, 0.8, 0.95, 0.65, 1, 0.75], bright: 1.4, level: 1.25, rasp: 1, intake: 0.8, crackle: 1, tyres: 1.1, pipes: [90, 380], crank: 0.45 },
-  taxi: { firing: even(4), bright: 0.85, level: 0.75, rasp: 0.2, intake: 0.4, crackle: 0, tyres: 1, pipes: [130, 600], crank: 0, electric: 9 },
-  pickup: { firing: even(6), bright: 0.7, level: 1.15, rasp: 0.6, intake: 0.5, crackle: 0, tyres: 1.2, pipes: [80, 300], crank: 0.95, diesel: true, turbo: true },
+  sedan: { shape: SHAPES.sedan, bright: 1, level: 1, crackle: 0, tyres: 1, crank: 0.7, crankRpm: 230 },
+  // a cross-plane V8: the two banks fire unevenly, which is its burble; a free-flowing exhaust
+  sports: { shape: SHAPES.sports, bright: 1.3, level: 1.2, crackle: 1, tyres: 1.1, crank: 0.55, crankRpm: 250 },
+  // a hybrid: heavily silenced, and silent altogether until the engine joins in
+  taxi: { shape: SHAPES.taxi, bright: 0.8, level: 0.7, crackle: 0, tyres: 1, crank: 0, crankRpm: 0, electric: 9 },
+  // a turbo diesel straight six: a short, hard burn is its knock; long pipes and a big silencer
+  pickup: { shape: SHAPES.pickup, bright: 0.8, level: 1.1, crackle: 0, tyres: 1.2, crank: 1.1, crankRpm: 170, turbo: true },
   // motorbikes
-  sport: { firing: even(4), bright: 1.6, level: 1.1, rasp: 0.9, intake: 1, crackle: 0.8, tyres: 0.5, pipes: [170, 900], crank: 0.35 },
-  // a 45 degree V-twin fires twice, 405 and 315 degrees apart: potato-potato
-  cruiser: { firing: [0, 405 / 720], bright: 0.8, level: 1.3, rasp: 1, intake: 0.5, crackle: 0.5, tyres: 0.6, pipes: [70, 260], crank: 0.7 },
-  dirt: { firing: [0], bright: 1.2, level: 1, rasp: 1.2, intake: 0.8, crackle: 0.6, tyres: 0.6, pipes: [140, 700], crank: 0.4 },
-  // a two-stroke fires every turn
-  scooter: { firing: [0, 0.5], bright: 1.3, level: 0.75, rasp: 1.4, intake: 0.3, crackle: 0, tyres: 0.4, pipes: [230, 1300], crank: 0.3 },
+  sport: { shape: SHAPES.sport, bright: 1.5, level: 1.05, crackle: 0.8, tyres: 0.5, crank: 0.45, crankRpm: 300 },
+  // a 45 degree V-twin fires twice, 405 and 315 degrees apart: potato-potato through near-open pipes
+  cruiser: { shape: SHAPES.cruiser, bright: 0.8, level: 1.25, crackle: 0.5, tyres: 0.6, crank: 0.8, crankRpm: 200 },
+  dirt: { shape: SHAPES.dirt, bright: 1.2, level: 1, crackle: 0.6, tyres: 0.6, crank: 0.5, crankRpm: 280 },
+  // a two-stroke fires every turn, through a tiny expansion chamber
+  scooter: { shape: SHAPES.scooter, bright: 1.3, level: 0.7, crackle: 0, tyres: 0.4, crank: 0.35, crankRpm: 320 },
 };
-
-/**
- * One engine cycle as a train of short pulses, one per firing, built from its harmonics. Under load
- * each firing is a sharp crack; shut off, the pulses are wider and softer, and the note goes hollow.
- */
-function engineWave(ctx: BaseAudioContext, k: EngineKind, width: number): PeriodicWave {
-  const n = 96;
-  const real = new Float32Array(n + 1);
-  const imag = new Float32Array(n + 1);
-  for (let h = 1; h <= n; h++) {
-    const fall = Math.exp(-((2 * Math.PI * h * width) ** 2) / 2);
-    k.firing.forEach((at, i) => {
-      const amp = (k.amps?.[i] ?? 1) * fall;
-      real[h] += amp * Math.cos(2 * Math.PI * h * at);
-      imag[h] += amp * Math.sin(2 * Math.PI * h * at);
-    });
-  }
-  return ctx.createPeriodicWave(real, imag);
-}
 
 /** What the engine does before the drivetrain says otherwise: ticking over in first. */
 const IDLING = { gear: 1, load: 0.12, shifting: false, spin: 0 };
 
 /**
- * A car or motorbike engine, voicing what its Drivetrain does: the revs, gear changes, load and
- * wheelspin all come from there. It cranks and catches when switched on; on load the exhaust barks,
- * shut off it goes hollow and pops; each firing varies a little, as real combustion does.
+ * A car or motorbike engine, voicing what its Drivetrain does. The engine itself is modelled on the
+ * audio thread (engineModel.ts): cylinders firing into pipes, so its tone, roughness and pops come
+ * from its build. Here it is started (solenoid, starter, ragged first firings, a flare of revs that
+ * hunts and settles) and steered by the drivetrain's revs, load and gear; tyres, turbo and gear
+ * whine are layered on top.
  */
 class EngineVoice implements VehicleVoice {
-  /** the note under load, and the softer one shut off, crossfaded by load */
-  private osc: OscillatorNode;
-  private coast: OscillatorNode;
-  private onGain: GainNode;
-  private offGain: GainNode;
+  private node: AudioWorkletNode | null = null;
+  private params = new Map<string, AudioParam>();
+  private exhaust: GainNode;
+  private intake: GainNode;
+  private block: GainNode;
   private filter: BiquadFilterNode;
   private body: GainNode;
-  private wobble: { lfo: OscillatorNode; depth: GainNode };
-  /** combustion varies from one firing to the next: slow noise shaking the level */
-  private jitter: { src: AudioBufferSourceNode; depth: GainNode };
-  private rasp: ReturnType<typeof noiseLoop>;
-  private intake: ReturnType<typeof noiseLoop>;
   private rough: ReturnType<typeof noiseLoop>;
   private road: ReturnType<typeof noiseLoop>;
   private squeal: ReturnType<typeof toneLoop>;
   private squeal2: ReturnType<typeof toneLoop>;
   private gearbox: ReturnType<typeof toneLoop>;
-  private starter: ReturnType<typeof toneLoop> | null = null;
   private whine: ReturnType<typeof toneLoop> | null = null;
   private turbo: ReturnType<typeof toneLoop> | null = null;
   private kind: EngineKind;
   private idle: number;
   private redline: number;
   private clock = 0;
+  /** when the engine was switched on, by this voice's clock; null until the worklet is running */
+  private startedAt: number | null = null;
+  private caught = false;
   private rpm: number;
   private gear = 1;
   private boost = 0;
   private lastThrottle = 0;
+  private popsUntil = 0;
+  private disposed = false;
   /** times the rider blips the throttle for fun */
   private revs: number[] = [];
   constructor(
@@ -888,66 +868,23 @@ class EngineVoice implements VehicleVoice {
     const p = powertrainFor(model, fallback);
     this.idle = p.idle;
     this.redline = p.redline;
-    this.rpm = k.crank ? 0 : p.idle;
-    this.osc = ctx.createOscillator();
-    this.osc.setPeriodicWave(engineWave(ctx, k, 0.012));
-    this.coast = ctx.createOscillator();
-    this.coast.setPeriodicWave(engineWave(ctx, k, 0.03));
-    for (const o of [this.osc, this.coast]) o.frequency.value = p.idle / 120;
-    this.onGain = ctx.createGain();
-    this.offGain = ctx.createGain();
-    this.offGain.gain.value = 0;
-    this.filter = ctx.createBiquadFilter();
-    this.filter.type = 'lowpass';
-    this.filter.Q.value = 2.5;
-    this.osc.connect(this.onGain).connect(this.filter);
-    this.coast.connect(this.offGain).connect(this.filter);
-    // the exhaust pipes ring at their own pitches whatever the revs
-    let last: AudioNode = this.filter;
-    k.pipes.forEach((freq, i) => {
-      const pipe = ctx.createBiquadFilter();
-      pipe.type = 'peaking';
-      pipe.frequency.value = freq;
-      pipe.Q.value = i ? 2 : 3;
-      pipe.gain.value = i ? 4 : 7;
-      last = last.connect(pipe);
-    });
+    this.rpm = p.idle;
     this.body = ctx.createGain();
     this.body.gain.value = 0;
-    last.connect(this.body).connect(out);
-    // a rough idle: the revs hunt a little, which smooths out once moving
-    const lfo = ctx.createOscillator();
-    lfo.frequency.value = 1.7;
-    const depth = ctx.createGain();
-    depth.gain.value = 0;
-    lfo.connect(depth).connect(this.osc.detune);
-    depth.connect(this.coast.detune);
-    this.wobble = { lfo, depth };
-    {
-      const src = ctx.createBufferSource();
-      src.buffer = a.noise;
-      src.loop = true;
-      const f = ctx.createBiquadFilter();
-      f.type = 'lowpass';
-      f.frequency.value = 25;
-      const depth = ctx.createGain();
-      depth.gain.value = 0;
-      src.connect(f).connect(depth).connect(this.body.gain);
-      src.start(a.now, Math.random() * 1.5);
-      this.jitter = { src, depth };
-    }
+    this.body.connect(out);
+    // the tailpipe's roar, darkened when the throttle shuts; the intake's breath; the block's hum
+    this.filter = ctx.createBiquadFilter();
+    this.filter.type = 'lowpass';
+    this.filter.Q.value = 0.7;
+    this.exhaust = ctx.createGain();
+    this.exhaust.connect(this.filter).connect(this.body);
+    this.intake = ctx.createGain();
+    this.intake.gain.value = 0;
+    this.intake.connect(this.body);
+    this.block = ctx.createGain();
+    this.block.gain.value = 0.5;
+    this.block.connect(this.body);
 
-    // exhaust rasp: noise that bursts with each firing (a diesel's clatter is the same, brighter)
-    this.rasp = noiseLoop(a, out, 'bandpass', k.diesel ? 2400 : 1200, k.diesel ? 2 : 1);
-    const gate = ctx.createGain();
-    gate.gain.value = 0;
-    this.rasp.f.disconnect();
-    this.rasp.f.connect(gate).connect(this.rasp.gain);
-    const gateDepth = ctx.createGain();
-    gateDepth.gain.value = 1;
-    this.osc.connect(gateDepth).connect(gate.gain);
-
-    this.intake = noiseLoop(a, out, 'bandpass', 800, 1.2);
     this.rough = noiseLoop(a, out, 'lowpass', 350);
     // tyres rolling on tarmac, rising with speed
     this.road = noiseLoop(a, out, 'bandpass', 600, 0.7);
@@ -956,21 +893,37 @@ class EngineVoice implements VehicleVoice {
     this.squeal2 = toneLoop(a, out, 1215);
     // straight-cut gears whine in first and while the engine brakes
     this.gearbox = toneLoop(a, out, 400);
-    if (k.crank) {
-      // the starter motor's whirr, chopped by each compression it turns over
-      this.starter = toneLoop(a, out, 160);
-      this.starter.o.type = 'sawtooth';
-    }
     if (k.electric) this.whine = toneLoop(a, out, 300);
     if (k.turbo) this.turbo = toneLoop(a, out, 2000);
-    this.osc.start();
-    this.coast.start();
-    lfo.start();
+
+    void a.engineModule.then((ok) => {
+      if (!ok || this.disposed) return;
+      const node = (this.node = new AudioWorkletNode(ctx, 'engine', {
+        numberOfInputs: 0,
+        numberOfOutputs: 3,
+        outputChannelCount: [1, 1, 1],
+        processorOptions: { shape: k.shape },
+      }));
+      for (const name of ENGINE_PARAMS) this.params.set(name, node.parameters.get(name)!);
+      node.connect(this.exhaust, 0);
+      node.connect(this.intake, 1);
+      node.connect(this.block, 2);
+      this.startedAt = this.clock;
+      // the solenoid throws the starter's pinion into the flywheel: a hard clack
+      if (k.crank) {
+        a.noiseBurst(out, a.now, 0.02, 2500, 3, 0.25 * k.level);
+        a.noiseBurst(out, a.now + 0.005, 0.06, 280, 1.5, 0.3 * k.level);
+      }
+    });
   }
 
   /** Two quick blips of the throttle. */
   rev() {
     this.revs = [this.clock, this.clock + 0.45];
+  }
+
+  private set(name: (typeof ENGINE_PARAMS)[number], v: number, t: number, tau: number) {
+    this.params.get(name)?.setTargetAtTime(v, t, tau);
   }
 
   update(s: EngineState, dt: number) {
@@ -981,62 +934,73 @@ class EngineVoice implements VehicleVoice {
     const e = s.engine ?? { ...IDLING, rpm: this.idle };
     const revving = this.revs.some((at) => this.clock >= at && this.clock < at + 0.25);
     this.revs = this.revs.filter((at) => this.clock < at + 0.25);
-    const L = revving ? 1 : e.load;
+    let L = revving ? 1 : e.load;
+    let rpm = revving ? Math.max(e.rpm, 0.7 * this.redline) : e.rpm;
+    // ticking over, the revs hunt a little
+    if (!moving) rpm *= 1 + 0.012 * Math.sin(this.clock * 2 * Math.PI * 1.7);
 
-    // turning over on the starter, then catching with a flare of revs that settles to idle
-    const cranking = this.clock < k.crank;
-    const caught = this.clock - k.crank;
-    let rpm = e.rpm;
-    if (cranking) rpm = 180 + 60 * Math.sin(this.clock * 40);
-    else if (k.crank && caught < 1.2) rpm = Math.max(rpm, this.idle * (1 + 0.9 * Math.exp(-caught / 0.25) * Math.min(1, caught / 0.08)));
-    if (revving) rpm = Math.max(rpm, 0.7 * this.redline);
-    // the revs are already eased by the drivetrain; here only the starter and blips need smoothing
-    this.rpm += (rpm - this.rpm) * Math.min(1, dt / 0.03);
-    const rev = this.rpm / this.redline;
-    if (this.starter) {
-      this.starter.o.frequency.setTargetAtTime(cranking ? 150 + 20 * Math.sin(this.clock * 40) : 60, t, 0.02);
-      this.starter.gain.gain.setTargetAtTime(cranking ? 0.025 : 0, t, cranking ? 0.02 : 0.01);
-    }
-
-    // a hybrid is silent but for its motor's whine until the engine joins in
+    // a hybrid's engine is still until the car needs it, then its motor spins it up smoothly
     const on = k.electric ? Math.max(0, Math.min(1, (s.speed - k.electric) / 3)) : 1;
-    const dip = e.shifting ? 0.35 : 1;
-    for (const o of [this.osc, this.coast]) o.frequency.setTargetAtTime(this.rpm / 120, t, 0.02);
-    this.onGain.gain.setTargetAtTime(0.3 + 0.7 * L, t, 0.04);
-    this.offGain.gain.setTargetAtTime(0.8 * (1 - L), t, 0.04);
-    this.wobble.depth.gain.setTargetAtTime(moving ? 0 : 25, t, 0.3);
-    // shutting the throttle muffles the note; opening it lets the exhaust bark
-    this.filter.frequency.setTargetAtTime((180 + rev * 2600 * (0.3 + 0.7 * L)) * k.bright, t, 0.04);
-    const level = k.level * on * dip * (cranking ? 0.5 : 1) * (0.05 + 0.07 * L + 0.04 * rev);
-    this.body.gain.setTargetAtTime(level, t, e.shifting ? 0.015 : 0.05);
-    // an idling engine stumbles more than one pulling hard (the slow noise is quiet, so the depth is large)
-    this.jitter.depth.gain.setTargetAtTime(level * (moving ? 8 : 15), t, 0.1);
-    const rasp = k.diesel ? 0.05 + 0.05 * L : 0.09 * L * (0.3 + rev);
-    this.rasp.gain.gain.setTargetAtTime(k.rasp * k.level * on * dip * rasp, t, 0.05);
-    if (!k.diesel) this.rasp.f.frequency.setTargetAtTime(900 + rev * 2200, t, 0.05);
-    this.intake.gain.gain.setTargetAtTime(k.intake * on * dip * 0.06 * L * L * rev, t, 0.05);
-    this.intake.f.frequency.setTargetAtTime(500 + rev * 2000, t, 0.05);
-
-    // changing up flat out: a quickshifter or twin clutch cracks through, the rest clunk softly
-    if (e.gear > this.gear && L > 0.6 && on) {
-      if (k.crackle >= 0.8) {
-        this.pop(t + 0.01);
-        this.pop(t + 0.04);
+    let fire = on > 0 ? 1 : 0;
+    let starter = 0;
+    let misfire = 0;
+    let rpmTau = k.electric ? 0.3 : 0.03;
+    if (k.electric && !on) rpm = 0;
+    const since = this.startedAt === null ? -1 : this.clock - this.startedAt;
+    if (k.crank && since >= 0) {
+      if (since < k.crank) {
+        // on the starter: turned over slowly with no spark, every compression dragging at it
+        rpm = k.crankRpm;
+        rpmTau = 0.06;
+        fire = 0;
+        starter = 1;
+        L = 0;
       } else {
-        this.a.noiseBurst(this.out, t, 0.05, 160, 1.5, 0.12 * k.level);
+        const u = since - k.crank;
+        if (!this.caught) {
+          this.caught = true;
+          // the pinion lets go of the flywheel
+          this.a.noiseBurst(this.out, t, 0.03, 1800, 4, 0.12 * k.level);
+        }
+        // it catches raggedly, flares, dips below idle and settles, idling fast for a while
+        misfire = 0.55 * Math.exp(-u / 0.18);
+        const rise = Math.min(1, u / 0.2);
+        const flare = u < 0.2 ? 0.75 * rise * rise * (3 - 2 * rise) : 0.75 * Math.exp(-(u - 0.2) / 0.35) * Math.cos((2 * Math.PI * (u - 0.2)) / 1.8);
+        const warm = 0.12 * Math.exp(-u / 4);
+        if (u < 5) rpm = Math.max(rpm, this.idle * (1 + flare + warm));
+        if (u < 0.6) L = Math.max(L, 0.45 * Math.exp(-u / 0.25));
+        starter = u < 0.15 ? 1 - u / 0.15 : 0;
+        rpmTau = 0.04;
       }
     }
+    this.rpm = rpm;
+    const rev = Math.min(1, this.rpm / this.redline);
+
+    // exhaust pops: a burst when the throttle snaps shut at high revs, crackling while the engine
+    // brakes, a crack through each flat-out change up on a quickshifter
+    if (k.crackle && on) {
+      if (this.lastThrottle > 0 && s.throttle < 0 && rev > 0.55) this.popsUntil = this.clock + 0.5;
+      if (e.gear > this.gear && L > 0.6 && k.crackle >= 0.8) this.popsUntil = Math.max(this.popsUntil, this.clock + 0.06);
+    }
+    const pops = this.clock < this.popsUntil ? 18 * k.crackle : k.crackle && L < 0.15 && rev > 0.4 ? 4 * k.crackle : 0;
+    // the rest change gear with a soft clunk
+    if (e.gear > this.gear && L > 0.6 && on && k.crackle < 0.8) this.a.noiseBurst(this.out, t, 0.05, 160, 1.5, 0.1 * k.level);
     this.gear = e.gear;
 
-    // shutting the throttle at high revs pops in the exhaust, and keeps crackling while the engine
-    // brakes; easing off to cruise stays smooth
-    if (k.crackle && on && !cranking) {
-      if (this.lastThrottle > 0 && s.throttle < 0 && rev > 0.55) {
-        for (let i = 0; i < Math.round(4 * k.crackle); i++) this.pop(t + 0.04 + Math.random() * 0.5);
-      } else if (L < 0.15 && rev > 0.4 && Math.random() < dt * 5 * k.crackle) {
-        this.pop(t + 0.01);
-      }
-    }
+    this.set('rpm', this.rpm, t, rpmTau);
+    this.set('load', L, t, 0.04);
+    this.set('fire', fire, t, 0.005);
+    this.set('misfire', misfire, t, 0.02);
+    this.set('starter', starter, t, 0.03);
+    this.set('pops', pops, t, 0.005);
+
+    const dip = e.shifting ? 0.4 : 1;
+    // shutting the throttle darkens the note; opening it lets the exhaust bark
+    this.filter.frequency.setTargetAtTime(Math.min(12000, (500 + rev * 4500 * (0.35 + 0.65 * L)) * k.bright), t, 0.04);
+    this.exhaust.gain.setTargetAtTime(0.8 + 0.2 * L, t, 0.04);
+    this.intake.gain.setTargetAtTime(0.45 * L * L, t, 0.05);
+    this.body.gain.setTargetAtTime(k.level * Math.max(on, starter) * dip * (0.2 + 0.05 * L + 0.08 * rev), t, e.shifting ? 0.015 : 0.05);
+
     if (this.turbo) {
       // the turbo spools up under load and sighs out through the blow-off valve when the throttle shuts
       if (this.lastThrottle > 0 && s.throttle <= 0 && this.boost > 0.4) this.a.noiseBurst(this.out, t + 0.02, 0.35, 3200, 0.8, 0.3 * this.boost);
@@ -1067,19 +1031,22 @@ class EngineVoice implements VehicleVoice {
     this.squeal2.gain.gain.setTargetAtTime(squeal * 0.8, t, squeal ? 0.04 : 0.03);
   }
 
-  private pop(when: number) {
-    const low = this.kind.firing.length <= 2; // big twins and singles bang lower
-    this.a.noiseBurst(this.out, when, 0.03, (low ? 200 : 350) + Math.random() * 600, 1, (0.3 + Math.random() * 0.3) * this.kind.level);
-  }
-
   dispose() {
-    const loops = [this.rasp, this.intake, this.rough, this.road];
-    const tones = [this.squeal, this.squeal2, this.gearbox, ...[this.starter, this.whine, this.turbo].filter((x) => !!x)];
+    this.disposed = true;
+    const loops = [this.rough, this.road];
+    const tones = [this.squeal, this.squeal2, this.gearbox, ...[this.whine, this.turbo].filter((x) => !!x)];
     fadeOut(
       this.a,
-      [this.body, this.jitter.depth, ...loops.map((l) => l.gain), ...tones.map((x) => x.gain)],
-      [this.osc, this.coast, this.wobble.lfo, this.jitter.src, ...loops.map((l) => l.src), ...tones.map((x) => x.o)],
+      [this.body, ...loops.map((l) => l.gain), ...tones.map((x) => x.gain)],
+      [...loops.map((l) => l.src), ...tones.map((x) => x.o)],
     );
+    // the worklet has no stop(): cut it loose once the fade is done
+    const node = this.node;
+    if (node)
+      setTimeout(() => {
+        node.port.postMessage('stop');
+        node.disconnect();
+      }, 100);
   }
 }
 

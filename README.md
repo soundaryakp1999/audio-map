@@ -27,7 +27,8 @@ Headphones recommended (place sounds are positioned in 3D around you).
 | `src/phone.ts` | Phone mode: the touch grid, travel and explore modes |
 | `src/areas.ts` | Buildings, water, parks and land use under a point, for grid mode |
 | `src/osm.ts` | Overpass and Nominatim fetching, retry, cache |
-| `src/audio/audio.ts` | Vehicle engines, earcons, HRTF place cues, rumble strips |
+| `src/audio/audio.ts` | Vehicle sounds, earcons, HRTF place cues, rumble strips |
+| `src/audio/engineModel.ts` | Modelled car and motorbike engines: cylinders and pipes as waveguides, run in an AudioWorklet |
 | `src/speech.ts` | Live regions, built-in voice, priorities, message history |
 | `src/vehicles.ts` | Speed and handling per vehicle, which roads each can use |
 | `src/drivetrain.ts` | Car and motorbike engines: torque curves, gearboxes, gear changes, wheelspin |
