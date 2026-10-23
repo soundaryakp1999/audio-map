@@ -23,7 +23,8 @@ import { extrasWanted, junctionQuiet, nextProfile, placeTier, placeWanted, PROFI
 import { Speech } from './speech';
 import { addCrossings, maneuverText, ordinal, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions, type StreetCrossing } from './router';
 import { fetchOnlineRoute, hasOnlineRouting } from './onlineRouter';
-import { VEHICLES, isMotor, modelFor, nextModel, roadHalfWidth, type VehicleProfile } from './vehicles';
+import { VEHICLES, VEHICLE_MODELS, isMotor, modelFor, nextModel, roadHalfWidth, type VehicleProfile } from './vehicles';
+import { Drivetrain, powertrainFor, type Surface } from './drivetrain';
 import { conditionsReport, isDark } from './weather';
 import { departuresReport, transitous } from './transit';
 import { byTierThenDistance, matchTier } from './search';
@@ -211,6 +212,8 @@ export class Game {
   /** the brake key is held */
   private braking = false;
   private vehicle: VehicleProfile;
+  /** a car or motorbike's engine and gearbox, for its model */
+  private drivetrain: Drivetrain | null = null;
 
   private running = false;
   private paused = false;
@@ -681,33 +684,37 @@ export class Game {
     const before = this.settings.soundProfile;
     this.settings.soundProfile = this.settings.vehicleProfiles[id] ?? before;
     saveSettings(this.settings);
-    this.speed = Math.min(this.speed, this.vehicle.maxSpeed);
     this.showVehicle();
+    this.speed = Math.min(this.speed, this.topSpeed);
     if (this.dest && this.world) {
       if (this.settings.turnByTurn && id !== 'helicopter') void this.computeRoute(announce);
       else this.clearRoute();
     }
     this.announcedNodes.clear();
     if (announce) {
-      this.speech.say(`${this.vehicle.name}. Top speed ${fmtSpeedShort(this.vehicle.maxSpeed, this.settings.units)}.${this.settings.soundProfile === before ? '' : ` ${PROFILE_TEXT[this.settings.soundProfile]}`}`, 'high');
+      this.speech.say(`${this.vehicle.name}. Top speed ${fmtSpeedShort(this.topSpeed, this.settings.units)}.${this.settings.soundProfile === before ? '' : ` ${PROFILE_TEXT[this.settings.soundProfile]}`}`, 'high');
     }
     if (this.proj && this.vehicle.loadRadius > prevRadius && !this.loading) void this.load(false);
   }
 
-  /** The vehicle's model on the map and in its sounds. */
+  /** The vehicle's model on the map, in its sounds and, for an engine, in how it pulls. */
   private showVehicle() {
-    const model = modelFor(this.vehicle.id, this.settings.vehicleModels);
-    this.map.setVehicle(this.vehicle.id, model);
-    this.audio.setVehicle(this.vehicle.id, model.id);
+    const v = this.vehicle;
+    const model = modelFor(v.id, this.settings.vehicleModels);
+    this.map.setVehicle(v.id, model);
+    this.audio.setVehicle(v.id, model.id);
+    this.drivetrain = isMotor(v.id) ? new Drivetrain(powertrainFor(model.id, VEHICLE_MODELS[v.id][0].id), v.accel, v.maxSpeed) : null;
   }
 
-  /** The same vehicle's key again changes its model: how it looks and sounds, not how it drives. */
+  /** The same vehicle's key again changes its model: how it looks and sounds and, for an engine, how it pulls. */
   private cycleModel() {
     const m = nextModel(this.vehicle.id, this.settings.vehicleModels);
     this.settings.vehicleModels = { ...this.settings.vehicleModels, [this.vehicle.id]: m.id };
     saveSettings(this.settings);
     this.showVehicle();
-    this.speech.say(`${m.name}.`, 'high');
+    this.speed = Math.min(this.speed, this.topSpeed);
+    const slower = this.topSpeed < this.vehicle.maxSpeed ? ` Top speed ${fmtSpeedShort(this.topSpeed, this.settings.units)}.` : '';
+    this.speech.say(`${m.name}.${slower}`, 'high');
   }
 
   // ---------------- loop ----------------
@@ -754,12 +761,24 @@ export class Game {
         maxSpeed: this.vehicle.maxSpeed,
         throttle: this.throttle,
         brake: this.braking,
-        surface: this.grid ? 'paved' : !this.onRoad && this.vehicle.id !== 'helicopter' ? 'offroad' : this.road?.surface && ROUGH.has(this.road.surface) ? 'rough' : 'paved',
+        surface: this.surface(),
         tunnel: !this.grid && !!this.road?.tunnel && this.onRoad,
         wind: !(this.live && this.liveFix),
+        engine: this.drivetrain?.reading(),
       },
       dt,
     );
+  }
+
+  private surface(): Surface {
+    if (this.grid) return 'paved';
+    if (!this.onRoad && this.vehicle.id !== 'helicopter') return 'offroad';
+    return this.road?.surface && ROUGH.has(this.road.surface) ? 'rough' : 'paved';
+  }
+
+  /** The top speed of this vehicle, or of its model when that is slower (a scooter). */
+  private get topSpeed() {
+    return this.drivetrain?.top ?? this.vehicle.maxSpeed;
   }
 
   private step(dt: number) {
@@ -814,24 +833,22 @@ export class Game {
   private drive(dt: number) {
     const v = this.vehicle;
     const inp = this.input;
-    this.throttle = 0;
-    if (inp.isDown('ArrowUp') && !inp.isDown('ControlLeft') && !inp.isDown('ControlRight')) {
-      this.speed += v.accel * dt;
-      this.throttle = 1;
-    }
-    if (inp.isDown('ArrowDown')) {
-      this.speed -= v.decel * dt;
-      this.throttle = -1;
-    }
-    if (inp.isDown('Slash')) {
+    const up = inp.isDown('ArrowUp') && !inp.isDown('ControlLeft') && !inp.isDown('ControlRight');
+    const down = inp.isDown('ArrowDown');
+    const brake = inp.isDown('Slash');
+    this.throttle = down || brake ? -1 : up ? 1 : 0;
+    // an engine pulls by its torque and gearing, cut while it changes gear; letting go holds the speed
+    const pull = this.drivetrain ? this.drivetrain.step(dt, this.throttle, this.speed, v.maxSpeed, this.surface()) : v.accel;
+    if (up) this.speed += pull * dt;
+    if (down) this.speed -= v.decel * dt;
+    if (brake) {
       this.speed -= v.brake * dt;
-      this.throttle = -1;
       this.braking = true;
     }
-    let max = v.maxSpeed;
+    let max = this.topSpeed;
     if (v.offRoadMax !== null && !this.onRoad) max = Math.min(max, v.offRoadMax);
     if (this.speed > max) this.speed = Math.max(max, this.speed - v.brake * dt);
-    this.speed = Math.max(0, Math.min(v.maxSpeed, this.speed));
+    this.speed = Math.max(0, Math.min(this.topSpeed, this.speed));
 
     // --- continuous turning after a short hold ---
     if (this.turnHold) {
@@ -2461,7 +2478,7 @@ export class Game {
         return this.speech.say(`Facing ${compass8(this.heading)}, ${Math.round(this.heading)} degrees.`, 'high');
       case 'speed':
         return this.speech.say(
-          this.speed < 0.1 ? 'Stopped.' : `${fmtSpeed(this.speed, u)}.`,
+          this.speed < 0.1 ? 'Stopped.' : `${fmtSpeed(this.speed, u)}${this.gearText()}.`,
           'high',
         );
       case 'toggleLive':
@@ -2671,10 +2688,16 @@ export class Game {
         'H heading, S speed, L location, Shift L live GPS: your real position and compass move you, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
         'F3 grid mode: arrows step north, south, west and east with a sound for the ground, minus and equals change the step, Space says where you are. ' +
         'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. ' + `${this.keyText('navigate')} searches for a destination. ` + 'D says the distance to go, D twice switches walking routes between shortest and streets only, ' + `${this.keyText('turnByTurn')} toggles turn by turn directions,` + ' I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it, Control V reports a wrong or missing road or place to OpenStreetMap. Z copies a link to this spot and route, Shift Z saves the route as a GPX file, Shift S saves the map here for offline use. U says how the trip went. E says where you are with the nearest landmark and stop, and the way back to the route if you have left it. Shift E turns look around on: stand still, hold the phone flat and point it a way to hear what lies there. Shift I says what lies ahead, the way you are walking. Shift M opens the destination in your maps app for its directions. Control right bracket hears places from farther, Control left bracket from nearer. Shift K says your address and shares your location as a map link. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. Shift X says the nearest entrances, platforms and lifts, Shift O the nearest toilets, bench, drinking water, shelter, post box and cash machine. Shift T reads the next departures when you stand at a stop, using the open Transitous feed, which covers much of Europe, North America and Australia. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. Control Shift P opens the command palette: type to find any action. ' +
-        '1 to 5 change vehicle: walker, bicycle, car, helicopter, motorbike; the same number again changes its model, which looks and sounds different. J sounds the horn, bell or whistle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. Sound themes are chosen in settings or from the command palette. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
+        '1 to 5 change vehicle: walker, bicycle, car, helicopter, motorbike; the same number again changes its model, which looks and sounds different, and for a car or motorbike pulls differently too. J sounds the horn, bell or whistle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. Sound themes are chosen in settings or from the command palette. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
     );
+  }
+
+  /** ", third gear" while driving a geared engine with the keys; nothing for a CVT or under live GPS. */
+  private gearText(): string {
+    const e = this.drivetrain?.reading();
+    return e?.gear && !(this.live && this.liveFix) ? `, ${ordinal(e.gear)} gear` : '';
   }
 
   private locationText(area = this.areaName): string {

@@ -30,6 +30,7 @@ Headphones recommended (place sounds are positioned in 3D around you).
 | `src/audio/audio.ts` | Vehicle engines, earcons, HRTF place cues, rumble strips |
 | `src/speech.ts` | Live regions, built-in voice, priorities, message history |
 | `src/vehicles.ts` | Speed and handling per vehicle, which roads each can use |
+| `src/drivetrain.ts` | Car and motorbike engines: torque curves, gearboxes, gear changes, wheelspin |
 | `src/mapview.ts` | Visual map, trail, heading cone |
 | `src/profiles.ts` | Sound profiles: which places and junctions are heard for each vehicle |
 | `src/favorites.ts`, `src/notes.ts` | Saved places and spot notes, kept in the browser |
