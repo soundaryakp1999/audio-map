@@ -1028,9 +1028,10 @@ class EngineVoice implements VehicleVoice {
     }
     this.gear = e.gear;
 
-    // lifting off at high revs pops in the exhaust, and keeps crackling while the engine brakes
+    // shutting the throttle at high revs pops in the exhaust, and keeps crackling while the engine
+    // brakes; easing off to cruise stays smooth
     if (k.crackle && on && !cranking) {
-      if (this.lastThrottle > 0 && s.throttle <= 0 && rev > 0.55) {
+      if (this.lastThrottle > 0 && s.throttle < 0 && rev > 0.55) {
         for (let i = 0; i < Math.round(4 * k.crackle); i++) this.pop(t + 0.04 + Math.random() * 0.5);
       } else if (L < 0.15 && rev > 0.4 && Math.random() < dt * 5 * k.crackle) {
         this.pop(t + 0.01);

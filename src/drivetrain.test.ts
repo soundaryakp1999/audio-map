@@ -123,3 +123,48 @@ describe('drivetrain', () => {
     expect(d.rpm).toBeCloseTo(d.p.idle, -1);
   });
 });
+
+describe('settling at top speed', () => {
+  /** Flat out to top speed, hold there, then let go; returns rpm and load each step after letting go. */
+  function settle(d: Drivetrain, maxSpeed: number) {
+    let v = 0;
+    for (let t = 0; t < 40; t += DT) v = Math.min(maxSpeed, v + d.step(DT, 1, v, maxSpeed, 'paved') * DT);
+    const gearHeld = d.gear;
+    const after: { rpm: number; load: number; gear: number }[] = [];
+    for (let t = 0; t < 2; t += DT) {
+      d.step(DT, 0, v, maxSpeed, 'paved');
+      after.push({ rpm: d.rpm, load: d.load, gear: d.gear });
+    }
+    return { gearHeld, after };
+  }
+
+  it('is already in its cruising gear while held at top speed, so letting go changes nothing abruptly', () => {
+    for (const [d, max] of [[car('sedan'), 33], [car('sports'), 33], [bike('sport'), 36]] as const) {
+      const { gearHeld, after } = settle(d, max);
+      expect(after.every((a) => a.gear === gearHeld)).toBe(true);
+      for (let i = 1; i < after.length; i++) expect(Math.abs(after[i].rpm - after[i - 1].rpm)).toBeLessThan(0.02 * d.p.redline);
+    }
+  });
+
+  it('eases off over about half a second rather than cutting out', () => {
+    const { after } = settle(car('sedan'), 33);
+    expect(after[Math.round(0.1 / DT)].load).toBeGreaterThan(0.45);
+    expect(after.at(-1)!.load).toBeCloseTo(0.3, 1);
+  });
+
+  it('glides the revs down when letting go mid-pull changes up', () => {
+    const d = car('sedan');
+    let v = 0;
+    while (v < 20) v += d.step(DT, 1, v, 33, 'paved') * DT;
+    const before = d.gear;
+    let maxDrop = 0;
+    let last = d.rpm;
+    for (let t = 0; t < 2; t += DT) {
+      d.step(DT, 0, v, 33, 'paved');
+      maxDrop = Math.max(maxDrop, last - d.rpm);
+      last = d.rpm;
+    }
+    expect(d.gear).toBeGreaterThan(before);
+    expect(maxDrop).toBeLessThan(0.03 * d.p.redline);
+  });
+});

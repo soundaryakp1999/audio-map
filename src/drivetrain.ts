@@ -87,6 +87,8 @@ export class Drivetrain {
   private clock = 0;
   private shiftUntil = 0;
   private lockUntil = 0;
+  /** after a relaxed change up the revs glide down instead of dropping */
+  private glideUntil = 0;
   /** extra revs from a rev-matching blip, as a share of the redline; dies away */
   private blip = 0;
   /** air and rolling resistance: pull lost at speed v is drag * v² */
@@ -154,7 +156,9 @@ export class Drivetrain {
     const pinned = throttle > 0 && speed >= Math.min(maxSpeed, this.top) - 0.1;
     const pulling = throttle > 0 && !pinned;
     const want = pulling ? 1 : pinned ? 0.55 : throttle < 0 ? 0 : moving ? 0.3 : 0.12;
-    this.load += (want - this.load) * Math.min(1, dt / 0.12);
+    // easing off to cruise is gentle; slowing down or flooring it is quick
+    const ease = want < this.load && throttle === 0 ? 0.5 : 0.12;
+    this.load += (want - this.load) * Math.min(1, dt / ease);
 
     let rpm: number;
     let drive = 0;
@@ -166,7 +170,8 @@ export class Drivetrain {
       else rpm = moving ? p.idle + (p.peak - p.idle) * 0.25 * r : p.idle;
       if (pulling) drive = this.pull(0, speed);
     } else {
-      this.chooseGear(speed, throttle, pulling, moving);
+      // held at top speed it only holds the speed, so it picks gears as if cruising
+      this.chooseGear(speed, pinned ? 0 : throttle, pulling, moving);
       const geared = this.inGear(this.gear, speed);
       // pulling away the clutch slips, so the engine runs above road speed; rolling to a stop it is
       // pressed in, and the engine drops to idle
@@ -185,7 +190,7 @@ export class Drivetrain {
     rpm = Math.min(p.redline, rpm + this.blip * p.redline);
     this.blip *= Math.exp(-dt / 0.12);
     // the engine's own weight: revs take a moment to rise and fall, quicker for a light bike
-    const inertia = this.shifting ? 0.04 : 0.08;
+    const inertia = this.shifting ? 0.04 : this.clock < this.glideUntil ? 0.2 : 0.08;
     this.rpm += (rpm - this.rpm) * Math.min(1, dt / inertia);
 
     if (!pulling) return 0;
@@ -219,6 +224,7 @@ export class Drivetrain {
     }
     if (next === g) return;
     if (next > g && pulling) this.shiftUntil = this.clock + p.shift; // clutch in, throttle off, for a moment
+    if (next > g && !pulling) this.glideUntil = this.clock + 0.6;
     if (next < g) this.blip = throttle < 0 ? 0.12 : 0.05; // rev matching
     this.gear = next;
     this.lockUntil = this.clock + Math.max(0.35, p.shift + 0.15);
