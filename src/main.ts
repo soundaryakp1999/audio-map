@@ -353,7 +353,10 @@ const phone = new Phone($('phone'), () => game, {
   },
 });
 
-/** Phone mode: find where you are, then the touch map in travel mode. Without a location, explore mode. */
+/**
+ * Phone mode: explore mode around where you are, from one location reading. Travel mode, which
+ * follows you, is chosen from its button: from a browser it is not reliable enough to be the default.
+ */
 function startPhone() {
   rememberPhone(true);
   stopPreview(speech);
@@ -363,24 +366,21 @@ function startPhone() {
   g.touch = true;
   if (menu.open) menu.close();
   $('app').inert = true; // the keyboard explorer underneath stays out of the screen reader's way
-  phone.show('travel');
+  phone.show('explore');
   applyShake();
-  const explore = (why: string) => {
-    speech.say(`${why} Explore mode works anywhere; travel mode needs your location.`, 'high');
+  const elsewhere = (why: string) => {
+    speech.say(`${why} Exploring ${selected.name} instead.`, 'high');
     if (!g.isStarted) void g.start(selected, selected.name);
-    phone.setMode('explore', false);
   };
-  if (!navigator.geolocation) return explore('Location is not available in this browser.');
-  speech.say('Phone mode. Finding your location.', 'high');
+  if (!navigator.geolocation) return elsewhere('Location is not available in this browser.');
+  speech.say('Phone mode. Explore mode, north up. Finding your location.', 'high');
   navigator.geolocation.getCurrentPosition(
     (pos) => {
       const here = { name: 'Your location', lat: pos.coords.latitude, lon: pos.coords.longitude };
       select(here, false);
       void g.start(here, 'your location');
-      // follow you from now on, destination or not: intersections, crossings and places as you walk
-      g.startLive();
     },
-    () => explore('Could not get your location; location permission may be off.'),
+    () => elsewhere('Could not get your location; location permission may be off.'),
     { enableHighAccuracy: true, timeout: 15000 },
   );
 }

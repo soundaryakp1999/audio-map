@@ -52,6 +52,10 @@ export interface PhoneHooks {
   guide(): void;
 }
 
+/** Said and shown on entering travel mode: a web page cannot promise to keep guiding you. */
+export const TRAVEL_WARNING =
+  'Travel mode is experimental and not reliable: it runs in a web browser, so your location can be off by many metres, and guidance can stop when the screen locks or you switch apps. Do not rely on it to keep you safe.';
+
 /** The beacon button's label. */
 export const beaconText = (on: boolean) => `Beacon sound: ${on ? 'on' : 'off'}`;
 
@@ -254,6 +258,7 @@ export class Phone {
       this.showSteps();
       if (this.stepsOpen && !this.el('ph-route').children.length) this.game((g) => g.announce('No route yet. Choose a destination: tap Where to.'));
     });
+    this.el('ph-warning').textContent = TRAVEL_WARNING;
     this.el('ph-mode').addEventListener('click', () => this.setMode(this.mode === 'travel' ? 'explore' : 'travel', true));
   }
 
@@ -342,20 +347,25 @@ export class Phone {
     if (!travel) this.centre = null; // explore starts around you, not where it was last panned to
     this.el('ph-travel').hidden = !travel;
     this.el('ph-explore').hidden = travel;
-    this.el('ph-mode').textContent = travel ? 'Travel mode. Switch to explore' : 'Explore mode. Switch to travel';
+    this.el('ph-mode').textContent = travel ? 'Travel mode. Switch to explore' : 'Explore mode. Switch to travel (experimental)';
+    this.el('ph-warning').hidden = !travel;
     this.frame = null; // draw afresh for the new mode
     this.up = null;
     this.applyMap();
     if (announce)
-      this.game((g) =>
+      this.game((g) => {
+        // from this tap, so iOS can ask for the compass; explore mode alone never follows you
+        if (travel) g.startLive();
         g.announce(
           travel
-            ? this.mapShown
-              ? 'Travel mode. The map follows you, with up the street you face. Touch a square to hear what is there.'
-              : 'Travel mode. Directions and buttons; Show map adds a touch map around you.'
+            ? `${TRAVEL_WARNING} ${
+                this.mapShown
+                  ? 'The map follows you, with up the street you face. Touch a square to hear what is there.'
+                  : 'Directions and buttons; Show map adds a touch map around you.'
+              }`
             : 'Explore mode. North is up. Pan and zoom with the buttons below the map.',
-        ),
-      );
+        );
+      });
   }
 
   /** Every quarter second: follow the traveller and compass, and keep the directions current. */
