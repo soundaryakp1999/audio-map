@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Phone, cellOf, cellPoint, isPhone, nextUp, offsetText, type PhoneGame } from './phone';
+import { Phone, TRAVEL_WARNING, cellOf, cellPoint, isPhone, nextUp, offsetText, type PhoneGame } from './phone';
 
 describe('cellPoint', () => {
   it('puts the top row ahead and the right column to the right, whichever way is up', () => {
@@ -126,6 +126,7 @@ describe('Phone screen', () => {
       routeSteps: () => [],
       announce: vi.fn(),
       setTarget: vi.fn(),
+      startLive: vi.fn(),
     };
     const phone = new Phone(el('phone') as unknown as HTMLElement, () => game as unknown as PhoneGame, {} as never) as any;
     return { phone, game, el, page };
@@ -192,6 +193,23 @@ describe('Phone screen', () => {
     expect(phone.frame.cx).toBe(900);
     expect(me()).toBe(24);
     await flush();
+  });
+
+  it('follows you only once travel mode is chosen, with a warning that it is not reliable', () => {
+    const { phone, game, el } = screen();
+    phone.setMode('explore', false); // as phone mode opens
+    expect(el('ph-warning').hidden).toBe(true);
+    expect(el('ph-mode').textContent).toBe('Explore mode. Switch to travel (experimental)');
+    expect(game.startLive).not.toHaveBeenCalled();
+    el('ph-mode').click();
+    expect(phone.mode).toBe('travel');
+    expect(game.startLive).toHaveBeenCalledTimes(1);
+    expect(el('ph-warning').hidden).toBe(false);
+    expect(el('ph-warning').textContent).toBe(TRAVEL_WARNING);
+    expect(game.announce).toHaveBeenLastCalledWith(expect.stringMatching(/^Travel mode is experimental and not reliable/));
+    el('ph-mode').click();
+    expect(el('ph-warning').hidden).toBe(true);
+    expect(game.startLive).toHaveBeenCalledTimes(1);
   });
 
   it('stops speaking squares once the mouse is let go, even outside the map', () => {

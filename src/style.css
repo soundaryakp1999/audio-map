@@ -554,6 +554,15 @@ dialog#nav label {
   text-align: center;
   color: var(--muted);
 }
+.ph-warning {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.ph-warning[hidden] {
+  display: none;
+}
 .ph-row {
   display: flex;
   flex-wrap: wrap;

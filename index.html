@@ -42,7 +42,7 @@
     <section id="phone" hidden aria-label="Phone">
       <div class="ph-welcome">
         <h1>Audio Map Explorer</h1>
-        <p>Phone mode: a touch map around you, directions to where you are going, and a sound beacon. It uses your location.</p>
+        <p>Phone mode: explore the streets around you by touch. Travel mode, which follows you as you walk with directions and a sound beacon, is experimental: it runs in a web browser, so it is not reliable.</p>
         <button type="button" id="ph-begin" class="primary">Begin</button>
         <button type="button" id="ph-fullmenu">Full menu</button>
         <button type="button" id="ph-install" hidden>Install app</button>
@@ -52,6 +52,7 @@
       <ol id="ph-route" class="ph-route" aria-label="Next turns" hidden></ol>
       <div id="ph-grid" role="group" aria-label="Map. Touch a square to hear what is there; double tap for more."></div>
       <p id="ph-status" class="ph-status"></p>
+      <p id="ph-warning" class="ph-warning" hidden></p>
       <div id="ph-travel" class="ph-row">
         <button type="button" id="ph-where">Where to?</button>
         <button type="button" id="ph-start" class="primary">Start</button>
@@ -99,7 +100,7 @@
       <form method="dialog" id="menu-form">
         <h1 id="menu-title">Audio Map Explorer</h1>
         <p class="lede">Explore real streets by sound. Choose a place and a vehicle, then press Start.</p>
-        <p><button type="button" id="phone-btn" class="primary">Phone mode</button> <span class="hint">On a phone: travel with your location and a touch map, or explore by touch. Works with VoiceOver and TalkBack.</span></p>
+        <p><button type="button" id="phone-btn" class="primary">Phone mode</button> <span class="hint">On a phone: explore by touch, or try the experimental travel mode, which follows your location. Works with VoiceOver and TalkBack.</span></p>
 
         <section aria-labelledby="where-h">
           <h2 id="where-h">Where</h2>
